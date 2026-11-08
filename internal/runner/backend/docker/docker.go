@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 	"gitee.com/kobeyoung81/nanorunner/internal/config"
@@ -340,8 +341,12 @@ func (b *Backend) warnIfOverCommitted(ctx context.Context, quota config.Quota) {
 
 // ContainerName returns the deterministic Docker container name for a request.
 func ContainerName(req nanoprotocol.ContainerRequest) string {
+	// NANOSEC_RUNNER_CONTAINER_PREFIX lets two stacks share one Docker daemon
+	// without fighting over the same deterministic name. Empty keeps the
+	// historical behaviour, so existing deployments are unaffected.
+	prefix := os.Getenv("NANOSEC_RUNNER_CONTAINER_PREFIX")
 	if req.BindingID > 0 {
-		return fmt.Sprintf("nanosec-agent-%s-%d", req.UserID, req.BindingID)
+		return fmt.Sprintf("%snanosec-agent-%s-%d", prefix, req.UserID, req.BindingID)
 	}
-	return fmt.Sprintf("nanosec-agent-%s", req.UserID)
+	return fmt.Sprintf("%snanosec-agent-%s", prefix, req.UserID)
 }
