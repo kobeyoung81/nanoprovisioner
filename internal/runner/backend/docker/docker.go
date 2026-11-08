@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 	"gitee.com/kobeyoung81/nanorunner/internal/config"
@@ -39,7 +38,7 @@ func New() (*Backend, error) {
 // provisioned, and a stale (created/exited) container is removed first so the
 // deterministic name can be reused.
 func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerRequest, opts runner.ProvisionOptions) error {
-	name := ContainerName(req)
+	name := ContainerName(req, opts.NamePrefix)
 
 	if existing, err := b.cli.ContainerInspect(ctx, name); err == nil {
 		if existing.State != nil && existing.State.Running {
@@ -60,7 +59,7 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 		network = ""
 	}
 
-	mounts, err := b.storageMounts(ctx, opts.Storage, req)
+	mounts, err := b.storageMounts(ctx, opts.Storage, req, opts.NamePrefix)
 	if err != nil {
 		return fmt.Errorf("setup storage %s: %w", req.UserID, err)
 	}
@@ -241,7 +240,7 @@ func agentEnv(username, busToken, timezone string) []string {
 // storageMounts returns the container mounts that persist the agent data root.
 // With the "volume" backend (default) a named volume is created (if absent) and
 // mounted at the data root; with "bind" a host path is bind-mounted instead.
-func (b *Backend) storageMounts(ctx context.Context, st config.StorageConfig, req nanoprotocol.ContainerRequest) ([]mount.Mount, error) {
+func (b *Backend) storageMounts(ctx context.Context, st config.StorageConfig, req nanoprotocol.ContainerRequest, prefix string) ([]mount.Mount, error) {
 	path := st.DataMountPath(runner.UserName(req))
 
 	if st.Backend == "bind" {
@@ -253,7 +252,7 @@ func (b *Backend) storageMounts(ctx context.Context, st config.StorageConfig, re
 		}, nil
 	}
 
-	name := runner.DataVolumeName(req)
+	name := runner.DataVolumeName(req, prefix)
 	if _, err := b.cli.VolumeInspect(ctx, name); err != nil {
 		if client.IsErrNotFound(err) {
 			volOpts := volume.CreateOptions{Name: name, Driver: st.Driver}
@@ -283,8 +282,8 @@ func stateOf(state *types.ContainerState) string {
 }
 
 // Deprovision stops and removes the agent container for a request.
-func (b *Backend) Deprovision(ctx context.Context, req nanoprotocol.ContainerRequest, _ runner.ProvisionOptions) error {
-	name := ContainerName(req)
+func (b *Backend) Deprovision(ctx context.Context, req nanoprotocol.ContainerRequest, opts runner.ProvisionOptions) error {
+	name := ContainerName(req, opts.NamePrefix)
 
 	if err := b.cli.ContainerStop(ctx, name, container.StopOptions{}); err != nil {
 		slog.Warn("stop container failed", "name", name, "error", err)
@@ -340,11 +339,7 @@ func (b *Backend) warnIfOverCommitted(ctx context.Context, quota config.Quota) {
 }
 
 // ContainerName returns the deterministic Docker container name for a request.
-func ContainerName(req nanoprotocol.ContainerRequest) string {
-	// NANOSEC_RUNNER_CONTAINER_PREFIX lets two stacks share one Docker daemon
-	// without fighting over the same deterministic name. Empty keeps the
-	// historical behaviour, so existing deployments are unaffected.
-	prefix := os.Getenv("NANOSEC_RUNNER_CONTAINER_PREFIX")
+func ContainerName(req nanoprotocol.ContainerRequest, prefix string) string {
 	if req.BindingID > 0 {
 		return fmt.Sprintf("%snanosec-agent-%s-%d", prefix, req.UserID, req.BindingID)
 	}

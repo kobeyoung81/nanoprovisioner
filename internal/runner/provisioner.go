@@ -16,6 +16,10 @@ type ProvisionOptions struct {
 	// every container it provisions inherits it.
 	BusToken       string
 	Network        string
+	// NamePrefix prefixes both the container name and the data volume name so
+	// several stacks can share one Docker daemon without touching each
+	// other's resources. Empty keeps the historical names.
+	NamePrefix     string
 	Quota          config.Quota
 	Storage        config.StorageConfig
 	SeccompProfile string // daemon-host path to the custom seccomp profile (optional)

@@ -110,6 +110,7 @@ func applyRunnerConfig(m map[string]string) RunnerConfig {
 	}
 	cfg.AgentImage = m["agentImage"]
 	cfg.Network = m["network"]
+	cfg.NamePrefix = m["namePrefix"]
 	cfg.SeccompProfile = m["seccompProfile"]
 	// An absent key means the bus has not seeded it yet: fall back to the
 	// built-in default rather than leaving agents in UTC. A present-but-empty

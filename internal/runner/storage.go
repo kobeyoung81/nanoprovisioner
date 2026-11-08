@@ -36,9 +36,9 @@ func UserName(req nanoprotocol.ContainerRequest) string {
 // user's agent. The same volume is used across docker named volumes, swarm
 // volumes, and (sanitized) k8s PVCs so an agent's data survives container
 // recreation regardless of backend.
-func DataVolumeName(req nanoprotocol.ContainerRequest) string {
+func DataVolumeName(req nanoprotocol.ContainerRequest, prefix string) string {
 	if req.BindingID > 0 {
-		return fmt.Sprintf("nanosec-data-%s-%d", req.UserID, req.BindingID)
+		return fmt.Sprintf("%snanosec-data-%s-%d", prefix, req.UserID, req.BindingID)
 	}
-	return fmt.Sprintf("nanosec-data-%s", req.UserID)
+	return fmt.Sprintf("%snanosec-data-%s", prefix, req.UserID)
 }

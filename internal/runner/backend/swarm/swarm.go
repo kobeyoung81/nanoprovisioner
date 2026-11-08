@@ -51,7 +51,7 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 
 	replicas := uint64(1)
 	username := runner.UserName(req)
-	mounts, err := storageMounts(opts.Storage, req)
+	mounts, err := storageMounts(opts.Storage, req, opts.NamePrefix)
 	if err != nil {
 		return fmt.Errorf("setup storage %s: %w", req.UserID, err)
 	}
@@ -118,7 +118,7 @@ func agentEnv(username, busToken, timezone string) []string {
 // storageMounts returns the service mounts that persist the agent data root. A
 // named volume is declared on the service (Docker Swarm creates it on first
 // use); with "bind" a host path is bind-mounted (single-manager only).
-func storageMounts(st config.StorageConfig, req nanoprotocol.ContainerRequest) ([]mount.Mount, error) {
+func storageMounts(st config.StorageConfig, req nanoprotocol.ContainerRequest, prefix string) ([]mount.Mount, error) {
 	path := st.DataMountPath(runner.UserName(req))
 
 	if st.Backend == "bind" {
@@ -131,7 +131,7 @@ func storageMounts(st config.StorageConfig, req nanoprotocol.ContainerRequest) (
 	}
 
 	return []mount.Mount{
-		{Type: mount.TypeVolume, Source: runner.DataVolumeName(req), Target: path},
+		{Type: mount.TypeVolume, Source: runner.DataVolumeName(req, prefix), Target: path},
 	}, nil
 }
 

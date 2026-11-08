@@ -106,7 +106,7 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 		"hostname":   runner.AgentHostname,
 	}
 	if opts.Storage.Backend != "bind" {
-		pvcName, err := b.ensurePVC(ctx, opts.Storage, req)
+		pvcName, err := b.ensurePVC(ctx, opts.Storage, req, opts.NamePrefix)
 		if err != nil {
 			return err
 		}
@@ -184,8 +184,8 @@ func agentEnv(username, busToken, timezone string) []map[string]any {
 // ensurePVC creates a per-user PersistentVolumeClaim (if none exists) so agent
 // data survives pod/Deployment recreation. Deprovision keeps the PVC so a
 // restarted agent reuses the same volume.
-func (b *Backend) ensurePVC(ctx context.Context, st config.StorageConfig, req nanoprotocol.ContainerRequest) (string, error) {
-	rawName := runner.DataVolumeName(req)
+func (b *Backend) ensurePVC(ctx context.Context, st config.StorageConfig, req nanoprotocol.ContainerRequest, prefix string) (string, error) {
+	rawName := runner.DataVolumeName(req, prefix)
 	pvcName := SanitizeName(rawName)
 
 	url := b.baseURL + "/api/v1/namespaces/" + b.namespace + "/persistentvolumeclaims"

@@ -6,6 +6,9 @@ type RunnerConfig struct {
 	AgentImage string         `json:"agentImage"  mapstructure:"agentImage"`
 	BusURL     string         `json:"busURL"      mapstructure:"busURL"` // resolved bus WebSocket URL
 	Network    string         `json:"network"     mapstructure:"network"`
+	// NamePrefix prefixes the agent container name and the data volume name
+	// so several stacks can share one Docker daemon without collisions.
+	NamePrefix string         `json:"namePrefix"  mapstructure:"namePrefix"`
 	Backend    string         `json:"backend"     mapstructure:"backend"` // docker | swarm | k8s
 	Storage    StorageConfig  `json:"storage"     mapstructure:"storage"`
 	Quotas     QuotaConfig    `json:"quotas"      mapstructure:"quotas"`

@@ -149,6 +149,7 @@ func (r *Runner) provisionOptions(req nanoprotocol.ContainerRequest) ProvisionOp
 		BusURL:         r.config.BusURL,
 		BusToken:       config.InternalToken(),
 		Network:        r.config.Network,
+		NamePrefix:     r.config.NamePrefix,
 		Quota:          r.config.Quotas.QuotaForLevel(req.Level),
 		Storage:        r.config.Storage,
 		SeccompProfile: r.config.SeccompProfile,
