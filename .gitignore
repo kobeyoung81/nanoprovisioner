@@ -1,0 +1,29 @@
+# build / runtime
+/bin/
+/dist/
+/build/
+*.exe
+*.test
+*.out
+
+# dependencies
+node_modules/
+vendor/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+credentials*
+*.pem
+*.key
+
+# logs & data
+*.log
+data/
+tmp/
+
+# editor
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,27 @@
+# Example Deployment for the nanorunner k8s provisioner backend.
+# Uses the in-cluster service account to manage per-user agent Deployments.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nanorunner
+  namespace: myriadmind
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nanorunner
+  template:
+    metadata:
+      labels:
+        app: nanorunner
+    spec:
+      serviceAccountName: nanorunner
+      containers:
+        - name: nanorunner
+          image: nanorunner:latest
+          args:
+            - "--bus-url"
+            - "ws://nanobus:9000"
+          env:
+            - name: LOG_LEVEL
+              value: INFO
