@@ -37,29 +37,48 @@ func InternalToken() string {
 	return strings.TrimSpace(os.Getenv("NANOSEC_BUS_INTERNAL_TOKEN"))
 }
 
-// LoadRunnerConfig connects to the bus, fetches the runner configuration
-// items, and reconstructs a RunnerConfig from flat key-value pairs.
-func LoadRunnerConfig(busURL string) (*RunnerConfig, error) {
-	client, err := nanoprotocol.NewClient(busURL, nanoprotocol.WithToken(InternalToken()))
-	if err != nil {
-		return nil, fmt.Errorf("connect to bus at %s: %w", busURL, err)
-	}
-	defer client.Close()
-
-	items, err := client.GetConfigItems("runner")
+// LoadRunnerConfig fetches the runner configuration from the admin module and
+// reconstructs a RunnerConfig from the flat key-value pairs.
+//
+// It retries briefly: a runner started a moment before admin still comes up
+// configured, and after ~30s the failure is reported instead of silently
+// provisioning with defaults.
+func LoadRunnerConfig(adminURL string) (*RunnerConfig, error) {
+	items, err := fetchWithRetry(adminURL, "runner")
 	if err != nil {
 		return nil, fmt.Errorf("get runner config items: %w", err)
 	}
-
-	m := configItemsToMap(items)
-	cfg := applyRunnerConfig(m)
+	cfg := applyRunnerConfig(configItemsToMap(items))
 	applyEnvOverrides(&cfg)
 	return &cfg, nil
+}
+
+// fetchWithRetry retries 1s, 2s, 4s, 8s, 8s, 8s — about 31 seconds.
+func fetchWithRetry(adminURL, component string) ([]nanoprotocol.ConfigItem, error) {
+	delays := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second, 8 * time.Second}
+	var lastErr error
+	for _, delay := range append([]time.Duration{0}, delays...) {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		items, err := fetchItemsFrom(adminURL, component, 5*time.Second)
+		if err == nil {
+			return items, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 // applyEnvOverrides lets deployment-specific values (which vary with the
 // Docker Compose project name, image registry, etc.) override bus config items.
 func applyEnvOverrides(cfg *RunnerConfig) {
+	if cfg.AdminURL == "" {
+		cfg.AdminURL = DefaultAdminURL
+	}
+	if v := os.Getenv("NANOSEC_ADMIN_URL"); v != "" {
+		cfg.AdminURL = v
+	}
 	if v := os.Getenv("NANOSEC_RUNNER_NETWORK"); v != "" {
 		cfg.Network = v
 	}

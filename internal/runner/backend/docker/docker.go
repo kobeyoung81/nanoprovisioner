@@ -184,7 +184,7 @@ func provisionConfig(req nanoprotocol.ContainerRequest, opts runner.ProvisionOpt
 		config: &container.Config{
 			Image:    opts.Image,
 			Hostname: runner.AgentHostname,
-			Env:      agentEnv(username, opts.BusToken, opts.Timezone),
+			Env:      agentEnv(username, opts.BusToken, opts.Timezone, opts.AdminURL),
 			Cmd:      cmd,
 		},
 		hostConfig: &container.HostConfig{
@@ -226,10 +226,13 @@ func provisionConfig(req nanoprotocol.ContainerRequest, opts runner.ProvisionOpt
 // is set here rather than in the image so an operator can change it in the
 // config center; empty leaves TZ unset, which is what the image does anyway
 // (the container then runs in UTC).
-func agentEnv(username, busToken, timezone string) []string {
+func agentEnv(username, busToken, timezone, adminURL string) []string {
 	env := []string{"AGENT_USERNAME=" + username}
 	if busToken != "" {
 		env = append(env, "NANOSEC_BUS_INTERNAL_TOKEN="+busToken)
+	}
+	if adminURL != "" {
+		env = append(env, "NANOSEC_ADMIN_URL="+adminURL)
 	}
 	if timezone != "" {
 		env = append(env, "TZ="+timezone)

@@ -93,7 +93,7 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 		"name":  "nanosec",
 		"image": opts.Image,
 		"args":  args,
-		"env":   agentEnv(username, opts.BusToken, opts.Timezone),
+		"env":   agentEnv(username, opts.BusToken, opts.Timezone, opts.AdminURL),
 		"resources": map[string]any{
 			"limits": map[string]any{
 				"memory": fmt.Sprintf("%dMi", opts.Quota.MemoryMB),
@@ -170,10 +170,13 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 
 // agentEnv is the container environment: the agent identity plus the shared bus
 // token, without which the agent cannot reach the bus at all.
-func agentEnv(username, busToken, timezone string) []map[string]any {
+func agentEnv(username, busToken, timezone, adminURL string) []map[string]any {
 	env := []map[string]any{{"name": "AGENT_USERNAME", "value": username}}
 	if busToken != "" {
 		env = append(env, map[string]any{"name": "NANOSEC_BUS_INTERNAL_TOKEN", "value": busToken})
+	}
+	if adminURL != "" {
+		env = append(env, map[string]any{"name": "NANOSEC_ADMIN_URL", "value": adminURL})
 	}
 	if timezone != "" {
 		env = append(env, map[string]any{"name": "TZ", "value": timezone})

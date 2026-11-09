@@ -9,8 +9,9 @@ import (
 
 // ProvisionOptions carries per-provision settings resolved from runner config.
 type ProvisionOptions struct {
-	Image  string
-	BusURL string
+	Image    string
+	BusURL   string
+	AdminURL string
 	// BusToken is the shared token agent containers present to the bus. It is
 	// part of the deployment (the runner holds it in its own environment), so
 	// every container it provisions inherits it.

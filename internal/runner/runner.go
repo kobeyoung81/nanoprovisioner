@@ -147,6 +147,7 @@ func (r *Runner) provisionOptions(req nanoprotocol.ContainerRequest) ProvisionOp
 	return ProvisionOptions{
 		Image:          r.config.AgentImage,
 		BusURL:         r.config.BusURL,
+		AdminURL:       r.config.AdminURL,
 		BusToken:       config.InternalToken(),
 		Network:        r.config.Network,
 		NamePrefix:     r.config.NamePrefix,
@@ -161,7 +162,7 @@ func (r *Runner) provisionOptions(req nanoprotocol.ContainerRequest) ProvisionOp
 // without a runner restart. A failed read never blocks provisioning: it falls
 // back to the value loaded at startup (which already carries the default).
 func (r *Runner) agentTimezone() string {
-	items, err := r.busClient.GetConfigItems("runner")
+	items, err := config.FetchItems("runner")
 	if err != nil {
 		slog.Warn("re-read agent timezone failed; using the startup value",
 			"error", err, "timezone", r.config.AgentTimezone)

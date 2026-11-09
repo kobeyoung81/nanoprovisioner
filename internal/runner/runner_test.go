@@ -11,17 +11,16 @@ import (
 	"gitee.com/kobeyoung81/nanorunner/internal/config"
 )
 
-// fakeBus answers every rpc with the given runner config items; that is all
-// agentTimezone ever asks for.
-func fakeBus(t *testing.T, items *[]nanoprotocol.ConfigItem) *httptest.Server {
+// fakeBus answers any rpc by echoing its type, which is enough for the status
+// updates provisioning performs. The bus no longer answers config questions.
+func fakeBus(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp, err := nanoprotocol.NewMessage(nanoprotocol.TypeConfigItems, nanoprotocol.GetConfigItemsResponse{
-			ComponentType: "runner",
-			Items:         *items,
-		})
+		var msg nanoprotocol.Message
+		_ = json.NewDecoder(r.Body).Decode(&msg)
+		resp, err := nanoprotocol.NewMessage(msg.Type, map[string]any{})
 		if err != nil {
-			t.Errorf("build response: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -31,17 +30,29 @@ func fakeBus(t *testing.T, items *[]nanoprotocol.ConfigItem) *httptest.Server {
 	return srv
 }
 
+// fakeAdmin answers the runner component over HTTP, which is how the runner
+// reads configuration now that the bus serves messages only.
+func fakeAdmin(t *testing.T, items *[]nanoprotocol.ConfigItem) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"component_type": "runner",
+			"items":          *items,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("NANOSEC_ADMIN_URL", srv.URL)
+	return srv
+}
+
 // The timezone is re-read before every provisioning, so a config change must
 // reach the next container without restarting the runner.
-func TestAgentTimezoneReReadsTheBus(t *testing.T) {
+func TestAgentTimezoneReReadsTheAdminModule(t *testing.T) {
 	items := []nanoprotocol.ConfigItem{{Key: "runner.agentTimezone", Value: "Asia/Tokyo"}}
-	srv := fakeBus(t, &items)
-	client, err := nanoprotocol.NewClient(srv.URL)
-	if err != nil {
-		t.Fatalf("create client: %v", err)
-	}
+	fakeAdmin(t, &items)
 
-	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, client, nil)
+	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, nil, nil)
 
 	if got := r.agentTimezone(); got != "Asia/Tokyo" {
 		t.Errorf("agentTimezone() = %q, want the freshly read Asia/Tokyo", got)
@@ -55,16 +66,12 @@ func TestAgentTimezoneReReadsTheBus(t *testing.T) {
 
 // A failed read must never block provisioning: the runner falls back to the
 // value it loaded at startup.
-func TestAgentTimezoneFallsBackWhenTheBusIsUnreachable(t *testing.T) {
+func TestAgentTimezoneFallsBackWhenAdminIsUnreachable(t *testing.T) {
 	items := []nanoprotocol.ConfigItem{}
-	srv := fakeBus(t, &items)
-	client, err := nanoprotocol.NewClient(srv.URL)
-	if err != nil {
-		t.Fatalf("create client: %v", err)
-	}
+	srv := fakeAdmin(t, &items)
 	srv.Close()
 
-	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, client, nil)
+	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, nil, nil)
 
 	if got := r.agentTimezone(); got != "Europe/Berlin" {
 		t.Errorf("agentTimezone() = %q, want the startup fallback Europe/Berlin", got)
@@ -89,10 +96,12 @@ func (p *recordingProvisioner) Deprovision(context.Context, nanoprotocol.Contain
 // into the backend, or a config change would only land after a runner restart.
 func TestProvisionContainerUsesTheFreshTimezone(t *testing.T) {
 	items := []nanoprotocol.ConfigItem{{Key: "runner.agentTimezone", Value: "Asia/Tokyo"}}
-	srv := fakeBus(t, &items)
-	client, err := nanoprotocol.NewClient(srv.URL)
+	fakeAdmin(t, &items)
+
+	bus := fakeBus(t)
+	client, err := nanoprotocol.NewClient(bus.URL)
 	if err != nil {
-		t.Fatalf("create client: %v", err)
+		t.Fatalf("create bus client: %v", err)
 	}
 
 	p := &recordingProvisioner{}

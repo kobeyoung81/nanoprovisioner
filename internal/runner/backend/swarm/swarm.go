@@ -61,7 +61,7 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 			ContainerSpec: &swarm.ContainerSpec{
 				Image:    opts.Image,
 				Args:     args,
-				Env:      agentEnv(username, opts.BusToken, opts.Timezone),
+				Env:      agentEnv(username, opts.BusToken, opts.Timezone, opts.AdminURL),
 				Hostname: runner.AgentHostname,
 				Mounts:   mounts,
 			},
@@ -104,10 +104,13 @@ func (b *Backend) Deprovision(ctx context.Context, req nanoprotocol.ContainerReq
 
 // agentEnv is the container environment: the agent identity plus the shared bus
 // token, without which the agent cannot reach the bus at all.
-func agentEnv(username, busToken, timezone string) []string {
+func agentEnv(username, busToken, timezone, adminURL string) []string {
 	env := []string{"AGENT_USERNAME=" + username}
 	if busToken != "" {
 		env = append(env, "NANOSEC_BUS_INTERNAL_TOKEN="+busToken)
+	}
+	if adminURL != "" {
+		env = append(env, "NANOSEC_ADMIN_URL="+adminURL)
 	}
 	if timezone != "" {
 		env = append(env, "TZ="+timezone)

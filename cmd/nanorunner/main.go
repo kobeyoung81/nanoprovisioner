@@ -42,7 +42,7 @@ provisions Docker containers per user with resource quotas by tier.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedBusURL := config.ResolveBusURL(busURL)
 
-			cfg, err := config.LoadRunnerConfig(resolvedBusURL)
+			cfg, err := config.LoadRunnerConfig(config.AdminURL())
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}

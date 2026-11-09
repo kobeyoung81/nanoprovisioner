@@ -33,7 +33,7 @@ func TestDeploymentName(t *testing.T) {
 // The container image sets no timezone, so the pod spec must carry TZ or the
 // agent's dates, cron schedules and git timestamps run in UTC.
 func TestAgentEnvCarriesTheTimezone(t *testing.T) {
-	env := agentEnv("alice", "", "Asia/Shanghai")
+	env := agentEnv("alice", "", "Asia/Shanghai", "http://nanoadmin:8080")
 
 	for _, entry := range env {
 		if name, _ := entry["name"].(string); name == "TZ" {
@@ -47,7 +47,7 @@ func TestAgentEnvCarriesTheTimezone(t *testing.T) {
 }
 
 func TestAgentEnvWithoutTimezoneLeavesTZUnset(t *testing.T) {
-	for _, entry := range agentEnv("alice", "", "") {
+	for _, entry := range agentEnv("alice", "", "", "http://nanoadmin:8080") {
 		if name, _ := entry["name"].(string); name == "TZ" {
 			t.Errorf("unexpected %v entry: an empty timezone must not inject TZ", entry)
 		}
