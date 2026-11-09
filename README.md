@@ -107,7 +107,7 @@ nanorunner version                        # Print version info
 
 ## Configuration
 
-Loaded from the bus at startup via `GetConfigItems("runner")` (seeded by `nanobus config seed`).
+Loaded from the bus at startup via `GetConfigItems("runner")` (seeded by `nanoadmin config seed`).
 
 ```json
 {
