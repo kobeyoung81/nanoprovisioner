@@ -28,7 +28,7 @@ const migrationsCollection = "sys_migrations"
 // sys_migrations collection: every module keeps its bookkeeping in the same
 // place, and the id carries the owner so two modules' filenames cannot be
 // mistaken for each other.
-const migrationService = "portal"
+const migrationService = "provisioner"
 
 // Migrate applies every pending manifest, in filename order.
 //

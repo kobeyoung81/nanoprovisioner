@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+
+	"gitee.com/kobeyoung81/nanorunner/migrations"
 )
 
 // testStore builds a throwaway database. What these tests pin is queue behaviour
@@ -155,5 +157,40 @@ func TestOneActiveRequestPerUser(t *testing.T) {
 	}
 	if err := st.CreateContainerRequest("u1", 0, "a2", "free"); err != ErrContainerAlreadyRequested {
 		t.Fatalf("second create = %v, want ErrContainerAlreadyRequested", err)
+	}
+}
+
+// The migration record is scoped by service: a record written under another
+// module's name would hide this one's manifests from its own status command —
+// and could collide with that module's filenames.
+func TestMigrationsAreRecordedUnderThisService(t *testing.T) {
+	st := testStore(t)
+	manifests, err := migrations.Load()
+	if err != nil {
+		t.Fatalf("load manifests: %v", err)
+	}
+	if _, err := st.Migrate(manifests); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var record struct {
+		ID      string `bson:"_id"`
+		Service string `bson:"service"`
+	}
+	if err := st.DB().Collection("sys_migrations").FindOne(context.Background(),
+		bson.D{{Key: "service", Value: migrationService}}).Decode(&record); err != nil {
+		t.Fatalf("read migration record: %v", err)
+	}
+	if record.Service != "provisioner" || record.ID == "" {
+		t.Fatalf("record = %+v", record)
+	}
+
+	// Running again applies nothing.
+	again, err := st.Migrate(manifests)
+	if err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("second run applied %v", again)
 	}
 }
