@@ -3,7 +3,7 @@ module gitee.com/kobeyoung81/nanorunner
 go 1.25.0
 
 require (
-	gitee.com/kobeyoung81/nanoprotocol v0.44.0
+	gitee.com/kobeyoung81/nanoprotocol v0.45.0
 	github.com/docker/docker v27.0.0+incompatible
 	github.com/spf13/cobra v1.8.1
 	go.mongodb.org/mongo-driver/v2 v2.9.2
