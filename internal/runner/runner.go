@@ -12,15 +12,29 @@ import (
 // Runner polls the bus for pending container requests and manages agent containers
 // via a platform-specific Provisioner backend.
 type Runner struct {
-	busClient   *nanoprotocol.Client
+	// busClient is still how a provisioned container reports the owner as
+	// active: accounts belong to the bus until the auth slice moves them.
+	busClient *nanoprotocol.Client
+	// queue is the provisioning queue. It used to be the bus's, while this
+	// service was its only poller and status writer; the queue is provisioning's.
+	queue       Queue
 	provisioner Provisioner
 	config      *config.RunnerConfig
 }
 
 // New creates a new Runner.
-func New(cfg *config.RunnerConfig, busClient *nanoprotocol.Client, provisioner Provisioner) *Runner {
+// Queue is what the runner reads work from and reports back to. The concrete
+// implementation is the provisioner's store; the interface keeps the loop
+// testable without a database.
+type Queue interface {
+	PollPendingContainers(runnerID string) ([]nanoprotocol.ContainerRequest, error)
+	UpdateContainerStatus(userID string, bindingID int64, status string) error
+}
+
+func New(cfg *config.RunnerConfig, queue Queue, busClient *nanoprotocol.Client, provisioner Provisioner) *Runner {
 	return &Runner{
 		busClient:   busClient,
+		queue:       queue,
 		provisioner: provisioner,
 		config:      cfg,
 	}
@@ -53,7 +67,7 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) pollAndDispatch(ctx context.Context) {
-	requests, err := r.busClient.PollPendingContainers(r.config.Runner.RunnerID)
+	requests, err := r.queue.PollPendingContainers(r.config.Runner.RunnerID)
 	if err != nil {
 		slog.Error("poll pending containers failed", "error", err)
 		return
@@ -80,13 +94,13 @@ func (r *Runner) provisionContainer(ctx context.Context, req nanoprotocol.Contai
 
 	if err := r.provisioner.Provision(ctx, req, opts); err != nil {
 		slog.Error("provision container failed", "user_id", req.UserID, "binding_id", req.BindingID, "error", err)
-		if serr := r.busClient.UpdateContainerStatus(req.UserID, req.BindingID, "failed"); serr != nil {
+		if serr := r.queue.UpdateContainerStatus(req.UserID, req.BindingID, "failed"); serr != nil {
 			slog.Error("mark container failed", "user_id", req.UserID, "binding_id", req.BindingID, "error", serr)
 		}
 		return
 	}
 
-	if err := r.busClient.UpdateContainerStatus(req.UserID, req.BindingID, "running"); err != nil {
+	if err := r.queue.UpdateContainerStatus(req.UserID, req.BindingID, "running"); err != nil {
 		slog.Error("update container status to running", "user_id", req.UserID, "binding_id", req.BindingID, "error", err)
 		return
 	}
@@ -110,13 +124,13 @@ func (r *Runner) restartContainer(ctx context.Context, req nanoprotocol.Containe
 
 	if err := r.provisioner.Provision(ctx, req, opts); err != nil {
 		slog.Error("reprovision container failed", "user_id", req.UserID, "binding_id", req.BindingID, "error", err)
-		if serr := r.busClient.UpdateContainerStatus(req.UserID, req.BindingID, "failed"); serr != nil {
+		if serr := r.queue.UpdateContainerStatus(req.UserID, req.BindingID, "failed"); serr != nil {
 			slog.Error("mark container failed", "user_id", req.UserID, "binding_id", req.BindingID, "error", serr)
 		}
 		return
 	}
 
-	if err := r.busClient.UpdateContainerStatus(req.UserID, req.BindingID, "running"); err != nil {
+	if err := r.queue.UpdateContainerStatus(req.UserID, req.BindingID, "running"); err != nil {
 		slog.Error("update container status to running", "user_id", req.UserID, "binding_id", req.BindingID, "error", err)
 		return
 	}
@@ -136,7 +150,7 @@ func (r *Runner) disposeContainer(ctx context.Context, req nanoprotocol.Containe
 		return
 	}
 
-	if err := r.busClient.UpdateContainerStatus(req.UserID, req.BindingID, "disposed"); err != nil {
+	if err := r.queue.UpdateContainerStatus(req.UserID, req.BindingID, "disposed"); err != nil {
 		slog.Error("update container status to disposed", "user_id", req.UserID, "binding_id", req.BindingID, "error", err)
 	}
 

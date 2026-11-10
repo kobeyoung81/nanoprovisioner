@@ -5,12 +5,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
-	"github.com/spf13/cobra"
 	"gitee.com/kobeyoung81/nanoprotocol"
 	"gitee.com/kobeyoung81/nanorunner/internal/config"
 	runnerlog "gitee.com/kobeyoung81/nanorunner/internal/log"
@@ -18,6 +18,10 @@ import (
 	"gitee.com/kobeyoung81/nanorunner/internal/runner/backend/docker"
 	"gitee.com/kobeyoung81/nanorunner/internal/runner/backend/k8s"
 	"gitee.com/kobeyoung81/nanorunner/internal/runner/backend/swarm"
+	provserver "gitee.com/kobeyoung81/nanorunner/internal/server"
+	"gitee.com/kobeyoung81/nanorunner/internal/store"
+	"gitee.com/kobeyoung81/nanorunner/migrations"
+	"github.com/spf13/cobra"
 )
 
 // Build-time variables set via -ldflags.
@@ -60,6 +64,23 @@ provisions Docker containers per user with resource quotas by tier.`,
 			// Set the resolved bus URL on config so containers inherit it.
 			cfg.BusURL = resolvedBusURL
 
+			// The provisioning queue is this service's; opening it and applying its
+			// manifests is what makes this the writer.
+			st, err := store.Open(config.MongoURI())
+			if err != nil {
+				return fmt.Errorf("store: %w", err)
+			}
+			defer st.Close()
+			manifests, err := migrations.Load()
+			if err != nil {
+				return fmt.Errorf("load migrations: %w", err)
+			}
+			if ran, err := st.Migrate(manifests); err != nil {
+				return fmt.Errorf("migrate: %w", err)
+			} else if len(ran) > 0 {
+				slog.Info("applied migrations", "count", len(ran))
+			}
+
 			busClient, err := nanoprotocol.NewClient(resolvedBusURL, nanoprotocol.WithToken(config.InternalToken()))
 			if err != nil {
 				return fmt.Errorf("connect to bus: %w", err)
@@ -82,7 +103,18 @@ provisions Docker containers per user with resource quotas by tier.`,
 				return fmt.Errorf("create provisioner: %w", err)
 			}
 
-			r := runner.New(cfg, busClient, provisioner)
+			r := runner.New(cfg, st, busClient, provisioner)
+
+			// The console's container actions reach the queue through here; the bus
+			// forwards them so no caller had to learn a new address.
+			api := provserver.New(st)
+			go func() {
+				slog.Info("provisioner api listening", "addr", config.HTTPAddr())
+				if err := api.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					slog.Error("provisioner api", "error", err)
+				}
+			}()
+			defer func() { _ = api.Shutdown() }()
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

@@ -52,7 +52,7 @@ func TestAgentTimezoneReReadsTheAdminModule(t *testing.T) {
 	items := []nanoprotocol.ConfigItem{{Key: "runner.agentTimezone", Value: "Asia/Tokyo"}}
 	fakeAdmin(t, &items)
 
-	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, nil, nil)
+	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, &fakeQueue{}, nil, nil)
 
 	if got := r.agentTimezone(); got != "Asia/Tokyo" {
 		t.Errorf("agentTimezone() = %q, want the freshly read Asia/Tokyo", got)
@@ -71,11 +71,26 @@ func TestAgentTimezoneFallsBackWhenAdminIsUnreachable(t *testing.T) {
 	srv := fakeAdmin(t, &items)
 	srv.Close()
 
-	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, nil, nil)
+	r := New(&config.RunnerConfig{AgentTimezone: "Europe/Berlin"}, &fakeQueue{}, nil, nil)
 
 	if got := r.agentTimezone(); got != "Europe/Berlin" {
 		t.Errorf("agentTimezone() = %q, want the startup fallback Europe/Berlin", got)
 	}
+}
+
+// fakeQueue stands in for the provisioning queue: the loop's decisions are what
+// the tests here pin, not the storage.
+type fakeQueue struct {
+	statuses []string
+}
+
+func (q *fakeQueue) PollPendingContainers(string) ([]nanoprotocol.ContainerRequest, error) {
+	return nil, nil
+}
+
+func (q *fakeQueue) UpdateContainerStatus(_ string, _ int64, status string) error {
+	q.statuses = append(q.statuses, status)
+	return nil
 }
 
 // recordingProvisioner captures what provisioning handed the backend.
@@ -105,7 +120,7 @@ func TestProvisionContainerUsesTheFreshTimezone(t *testing.T) {
 	}
 
 	p := &recordingProvisioner{}
-	r := New(&config.RunnerConfig{AgentImage: "nanosec:latest"}, client, p)
+	r := New(&config.RunnerConfig{AgentImage: "nanosec:latest"}, &fakeQueue{}, client, p)
 
 	r.provisionContainer(context.Background(), nanoprotocol.ContainerRequest{UserID: "alice", Level: "free"})
 
