@@ -194,3 +194,63 @@ func TestMigrationsAreRecordedUnderThisService(t *testing.T) {
 		t.Fatalf("second run applied %v", again)
 	}
 }
+
+// TestMigrations_DeclareContainerRequestIndexes pins the indexes the collection
+// carried when it was the bus's: the unique binding (the MongoDB form of MySQL's
+// UNIQUE-permitting-many-NULLs) and the two the poll and the console read with.
+func TestMigrations_DeclareContainerRequestIndexes(t *testing.T) {
+	st := testStore(t)
+	manifests, err := migrations.Load()
+	if err != nil {
+		t.Fatalf("load manifests: %v", err)
+	}
+	if _, err := st.Migrate(manifests); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	ctx := context.Background()
+
+	want := map[string]struct {
+		keys     bson.D
+		unique   bool
+		sparseOK bool
+	}{
+		"binding_unique": {keys: bson.D{{Key: "binding_id", Value: int32(1)}}, unique: true},
+		"status_created": {keys: bson.D{{Key: "status", Value: int32(1)}, {Key: "created_at", Value: int32(1)}}},
+		"user_binding":   {keys: bson.D{{Key: "user_id", Value: int32(1)}, {Key: "binding_id", Value: int32(1)}}},
+	}
+
+	cur, err := st.DB().Collection("provisioner_container_requests").Indexes().List(ctx)
+	if err != nil {
+		t.Fatalf("list indexes: %v", err)
+	}
+	type indexDoc struct {
+		Name   string `bson:"name"`
+		Key    bson.D `bson:"key"`
+		Unique bool   `bson:"unique"`
+	}
+	seen := map[string]indexDoc{}
+	for cur.Next(ctx) {
+		var doc indexDoc
+		if err := cur.Decode(&doc); err != nil {
+			t.Fatalf("decode index: %v", err)
+		}
+		seen[doc.Name] = doc
+	}
+	for name, want := range want {
+		got, ok := seen[name]
+		if !ok {
+			t.Fatalf("index %s is missing from the applied manifest", name)
+		}
+		if len(got.Key) != len(want.keys) {
+			t.Fatalf("index %s has %d keys, want %d", name, len(got.Key), len(want.keys))
+		}
+		for i := range want.keys {
+			if got.Key[i] != want.keys[i] {
+				t.Fatalf("index %s key %d = %v, want %v", name, i, got.Key[i], want.keys[i])
+			}
+		}
+		if got.Unique != want.unique {
+			t.Fatalf("index %s unique = %v, want %v", name, got.Unique, want.unique)
+		}
+	}
+}

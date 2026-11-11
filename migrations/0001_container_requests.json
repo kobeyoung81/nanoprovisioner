@@ -4,17 +4,40 @@
       "indexes": [
         {
           "name": "binding_unique",
-          "keys": [["binding_id", 1]],
+          "keys": [
+            [
+              "binding_id",
+              1
+            ]
+          ],
           "unique": true,
           "sparse": true
         },
         {
           "name": "status_created",
-          "keys": [["status", 1], ["created_at", 1]]
+          "keys": [
+            [
+              "status",
+              1
+            ],
+            [
+              "created_at",
+              1
+            ]
+          ]
         },
         {
           "name": "user_binding",
-          "keys": [["user_id", 1], ["binding_id", 1]]
+          "keys": [
+            [
+              "user_id",
+              1
+            ],
+            [
+              "binding_id",
+              1
+            ]
+          ]
         }
       ]
     }
