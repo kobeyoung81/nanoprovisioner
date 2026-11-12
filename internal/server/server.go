@@ -29,6 +29,10 @@ type Server struct {
 func New(st *store.Store) *Server {
 	s := &Server{store: st, token: config.InternalToken()}
 	mux := http.NewServeMux()
+	// The runner registry is this service's too: it registers itself and reports
+	// its heartbeat, and the console prunes dead rows through the bus.
+	mux.HandleFunc("POST /api/v1/internal/runners", s.registerRunner)
+	mux.HandleFunc("DELETE /api/v1/internal/runners/{id}", s.deleteRunner)
 	mux.HandleFunc("POST /api/v1/internal/container-requests", s.enqueueForAgent)
 	mux.HandleFunc("POST /api/v1/internal/containers", s.enqueue)
 	mux.HandleFunc("POST /api/v1/internal/containers/{userID}/dispose", s.dispose)
@@ -61,6 +65,42 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) registerRunner(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		RunnerID   string `json:"runner_id"`
+		Hostname   string `json:"hostname"`
+		DockerHost string `json:"docker_host"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if body.RunnerID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "runner_id is required"})
+		return
+	}
+	if err := s.store.RegisterRunner(body.RunnerID, body.Hostname, body.DockerHost); err != nil {
+		slog.Error("register runner", "runner_id", body.RunnerID, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"runner_id": body.RunnerID, "status": "online"})
+}
+
+func (s *Server) deleteRunner(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "runner id is required"})
+		return
+	}
+	if err := s.store.DeleteRunner(id); err != nil {
+		slog.Error("delete runner", "runner_id", id, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) enqueueForAgent(w http.ResponseWriter, r *http.Request) {

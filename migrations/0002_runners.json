@@ -1,0 +1,16 @@
+{
+  "collections": {
+    "provisioner_runners": {
+      "indexes": [
+        {
+          "name": "status_last_heartbeat",
+          "keys": [["status", 1], ["last_heartbeat", 1]]
+        },
+        {
+          "name": "registered_at_desc",
+          "keys": [["registered_at", -1]]
+        }
+      ]
+    }
+  }
+}

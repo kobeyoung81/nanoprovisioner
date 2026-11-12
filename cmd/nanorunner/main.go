@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 	"gitee.com/kobeyoung81/nanorunner/internal/config"
@@ -87,13 +88,14 @@ provisions Docker containers per user with resource quotas by tier.`,
 			}
 			defer busClient.Close()
 
-			// Register this runner with the bus.
+			// Register in this service's own registry; the console reads it through
+			// the bus, which no longer writes it.
 			hostname, _ := os.Hostname()
 			dockerHost := os.Getenv("DOCKER_HOST")
 			if dockerHost == "" {
 				dockerHost = "local"
 			}
-			if _, err := busClient.RegisterRunner(cfg.Runner.RunnerID, hostname, dockerHost); err != nil {
+			if err := st.RegisterRunner(cfg.Runner.RunnerID, hostname, dockerHost); err != nil {
 				return fmt.Errorf("register runner: %w", err)
 			}
 			slog.Info("runner registered", "runner_id", cfg.Runner.RunnerID)
@@ -119,6 +121,10 @@ provisions Docker containers per user with resource quotas by tier.`,
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
+			// A heartbeat every minute keeps the row online (the staleness window is
+			// two minutes) and sweeps runners that stopped reporting.
+			go runHeartbeat(ctx, st, cfg.Runner.RunnerID)
+
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 			go func() {
@@ -142,6 +148,30 @@ provisions Docker containers per user with resource quotas by tier.`,
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
+	}
+}
+
+// heartbeatInterval is the runner's own reporting cadence. It has to stay well
+// inside store.RunnerStaleTimeout, or a busy loop would mark itself offline.
+const heartbeatInterval = time.Minute
+
+// runHeartbeat reports this runner's heartbeat and marks the rows of runners that
+// stopped reporting as offline, so the fleet view reflects reality.
+func runHeartbeat(ctx context.Context, st *store.Store, runnerID string) {
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := st.TouchRunner(runnerID); err != nil {
+				slog.Warn("runner heartbeat failed", "runner_id", runnerID, "error", err)
+			}
+			if err := st.MarkStaleRunnersOffline(); err != nil {
+				slog.Warn("sweep stale runners failed", "error", err)
+			}
+		}
 	}
 }
 
