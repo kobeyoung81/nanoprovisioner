@@ -166,7 +166,7 @@ func boolPtr(v bool) *bool { return &v }
 // absent on the host, container creation fails loudly rather than silently
 // weakening the profile.
 func provisionConfig(req nanoprotocol.ContainerRequest, opts runner.ProvisionOptions, mounts []mount.Mount, username string) provisionSpec {
-	cmd := []string{"hypervisor", "--user", req.UserID, "--bus-url", opts.BusURL}
+	cmd := []string{"hypervisor", "--user", req.UserID, "--bus-url", opts.BusURL, "--tunnel-url", runner.TunnelURLOrBus(opts)}
 	if req.BindingID > 0 {
 		cmd = append(cmd, "--binding", fmt.Sprintf("%d", req.BindingID))
 	}

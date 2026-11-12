@@ -15,6 +15,18 @@ import (
 // DefaultAdminURL is where the admin module listens inside the compose network.
 const DefaultAdminURL = "http://nanoadmin:8080"
 
+// DefaultPortalURL is where the portal listens inside the compose network.
+const DefaultPortalURL = "http://nanoportal:80"
+
+// PortalURL returns the portal's base URL. The terminal checks agent ownership
+// against the module that owns the rows.
+func PortalURL() string {
+	if v := strings.TrimSpace(os.Getenv("NANOSEC_PORTAL_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return DefaultPortalURL
+}
+
 // AdminURL returns the admin module's base URL. Configuration belongs to that
 // module; the provisioner asks for it over HTTP like every other service.
 func AdminURL() string {

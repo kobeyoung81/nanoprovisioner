@@ -16,6 +16,10 @@ import (
 
 const (
 	DefaultBusURL = "ws://nanobus:9000"
+	// DefaultTunnelURL is this service's own tunnel endpoint, as seen from an
+	// agent container on the compose network. Containers dial it instead of the
+	// bus so a tunnel survives losing the bus replica that first served it.
+	DefaultTunnelURL = "ws://nanorunner:8080"
 )
 
 // ResolveBusURL returns the bus URL from the flag value, the
@@ -50,6 +54,9 @@ func LoadRunnerConfig(adminURL string) (*RunnerConfig, error) {
 	}
 	cfg := applyRunnerConfig(configItemsToMap(items))
 	applyEnvOverrides(&cfg)
+	if cfg.TunnelURL == "" {
+		cfg.TunnelURL = DefaultTunnelURL
+	}
 	return &cfg, nil
 }
 
@@ -87,6 +94,9 @@ func applyEnvOverrides(cfg *RunnerConfig) {
 	}
 	if v := os.Getenv("NANOSEC_RUNNER_BACKEND"); v != "" {
 		cfg.Backend = v
+	}
+	if v := os.Getenv("NANOSEC_RUNNER_TUNNEL_URL"); v != "" {
+		cfg.TunnelURL = v
 	}
 	if v := os.Getenv("NANOSEC_RUNNER_STORAGE_BACKEND"); v != "" {
 		cfg.Storage.Backend = v
@@ -141,6 +151,9 @@ func applyRunnerConfig(m map[string]string) RunnerConfig {
 	}
 	if v := m["runner.backend"]; v != "" {
 		cfg.Backend = v
+	}
+	if v := m["runner.tunnelUrl"]; v != "" {
+		cfg.TunnelURL = v
 	}
 	applyRunnerStorage(&cfg.Storage, m)
 

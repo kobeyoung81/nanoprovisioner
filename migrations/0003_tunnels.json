@@ -1,0 +1,16 @@
+{
+  "collections": {
+    "provisioner_tunnels": {
+      "indexes": [
+        {
+          "name": "heartbeat",
+          "keys": [["heartbeat_at", 1]]
+        },
+        {
+          "name": "runner_id",
+          "keys": [["runner_id", 1]]
+        }
+      ]
+    }
+  }
+}

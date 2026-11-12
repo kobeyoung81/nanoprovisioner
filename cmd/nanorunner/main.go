@@ -109,7 +109,7 @@ provisions Docker containers per user with resource quotas by tier.`,
 
 			// The console's container actions reach the queue through here; the bus
 			// forwards them so no caller had to learn a new address.
-			api := provserver.New(st)
+			api := provserver.New(st, cfg.Runner.RunnerID)
 			go func() {
 				slog.Info("provisioner api listening", "addr", config.HTTPAddr())
 				if err := api.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -170,6 +170,11 @@ func runHeartbeat(ctx context.Context, st *store.Store, runnerID string) {
 			}
 			if err := st.MarkStaleRunnersOffline(); err != nil {
 				slog.Warn("sweep stale runners failed", "error", err)
+			}
+			// Tunnel rows describe a live connection; one left behind by a killed
+			// process would make a dead container look reachable.
+			if _, err := st.MarkStaleTunnels(time.Now().UTC(), store.TunnelStaleTimeout); err != nil {
+				slog.Warn("sweep stale tunnels failed", "error", err)
 			}
 		}
 	}

@@ -44,7 +44,7 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 		return fmt.Errorf("inspect service %s: %w", name, err)
 	}
 
-	args := []string{"hypervisor", "--user", req.UserID, "--bus-url", opts.BusURL}
+	args := []string{"hypervisor", "--user", req.UserID, "--bus-url", opts.BusURL, "--tunnel-url", runner.TunnelURLOrBus(opts)}
 	if req.BindingID > 0 {
 		args = append(args, "--binding", fmt.Sprintf("%d", req.BindingID))
 	}

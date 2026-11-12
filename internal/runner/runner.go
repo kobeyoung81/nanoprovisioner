@@ -161,6 +161,7 @@ func (r *Runner) provisionOptions(req nanoprotocol.ContainerRequest) ProvisionOp
 	return ProvisionOptions{
 		Image:          r.config.AgentImage,
 		BusURL:         r.config.BusURL,
+		TunnelURL:      r.config.TunnelURL,
 		AdminURL:       r.config.AdminURL,
 		BusToken:       config.InternalToken(),
 		Network:        r.config.Network,

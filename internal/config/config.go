@@ -5,6 +5,10 @@ type RunnerConfig struct {
 	Runner     RunnerSettings `json:"runner"      mapstructure:"runner"`
 	AgentImage string         `json:"agentImage"  mapstructure:"agentImage"`
 	BusURL     string         `json:"busURL" mapstructure:"busURL"` // resolved bus WebSocket URL
+	// TunnelURL is where agent containers dial the hypervisor tunnel. Tunnels
+	// belong to this service, so containers point here; an empty value falls back
+	// to BusURL, which is how a deployment that has not rolled over yet behaves.
+	TunnelURL string `json:"tunnelUrl" mapstructure:"tunnelUrl"`
 	// AdminURL is passed to every agent container: the agent reads its
 	// configuration from the admin module, not from the bus.
 	AdminURL string `json:"adminURL" mapstructure:"adminURL"`

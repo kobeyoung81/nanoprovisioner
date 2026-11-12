@@ -261,3 +261,38 @@ func TestProvisionConfig_CarriesTheAgentTimezone(t *testing.T) {
 		}
 	}
 }
+
+// TestProvisionConfig_PointsTheTunnelAtTheProvisioner pins the rollout wiring:
+// containers are told to dial the provisioner, which owns tunnels now. Without
+// the flag every container keeps dialing the bus, and a second bus replica still
+// cannot reach it.
+func TestProvisionConfig_PointsTheTunnelAtTheProvisioner(t *testing.T) {
+	req := nanoprotocol.ContainerRequest{UserID: "alice"}
+	opts := runner.ProvisionOptions{
+		Image:     "nanosec:latest",
+		BusURL:    "ws://bus:9000",
+		TunnelURL: "ws://runner:8080",
+		Quota:     config.Quota{MemoryMB: 512, CPUs: 1e9},
+	}
+
+	cmd := strings.Join(provisionConfig(req, opts, nil, runner.UserName(req)).config.Cmd, " ")
+	if !strings.Contains(cmd, "--tunnel-url ws://runner:8080") {
+		t.Fatalf("the container is not told where to dial the tunnel: %q", cmd)
+	}
+}
+
+// TestProvisionConfig_FallsBackToTheBusWithoutATunnelURL keeps a deployment that
+// has not set runner.tunnelUrl working exactly as before.
+func TestProvisionConfig_FallsBackToTheBusWithoutATunnelURL(t *testing.T) {
+	req := nanoprotocol.ContainerRequest{UserID: "alice"}
+	opts := runner.ProvisionOptions{
+		Image:  "nanosec:latest",
+		BusURL: "ws://bus:9000",
+		Quota:  config.Quota{MemoryMB: 512, CPUs: 1e9},
+	}
+
+	cmd := strings.Join(provisionConfig(req, opts, nil, runner.UserName(req)).config.Cmd, " ")
+	if !strings.Contains(cmd, "--tunnel-url ws://bus:9000") {
+		t.Fatalf("the tunnel URL did not fall back to the bus: %q", cmd)
+	}
+}

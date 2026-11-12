@@ -82,7 +82,7 @@ func (b *Backend) Provision(ctx context.Context, req nanoprotocol.ContainerReque
 	name := DeploymentName(req)
 	labels := map[string]string{"app": "nanosec-agent", "nanosec.io/user": SanitizeName(req.UserID)}
 
-	args := []string{"--user", req.UserID, "--bus-url", opts.BusURL}
+	args := []string{"--user", req.UserID, "--bus-url", opts.BusURL, "--tunnel-url", runner.TunnelURLOrBus(opts)}
 	if req.BindingID > 0 {
 		args = append(args, "--binding", fmt.Sprintf("%d", req.BindingID))
 	}

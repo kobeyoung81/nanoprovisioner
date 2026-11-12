@@ -12,23 +12,49 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"gitee.com/kobeyoung81/nanorunner/internal/config"
+	"gitee.com/kobeyoung81/nanorunner/internal/portalclient"
 	"gitee.com/kobeyoung81/nanorunner/internal/store"
+	"github.com/gorilla/websocket"
 )
 
-// Server serves the internal API.
+// Server serves the internal API and the two WebSocket surfaces containers and
+// the terminal need.
 type Server struct {
 	store *store.Store
 	srv   *http.Server
 	token string
+	// runnerID is stamped on tunnel rows so stage 6 can forward a request to the
+	// replica that holds the connection.
+	runnerID     string
+	portal       *portalclient.Client
+	upgrader     websocket.Upgrader
+	tunnels      *tunnelRegistry
+	terminalSubs *terminalSubRegistry
 }
 
-// New builds the API around the queue.
-func New(st *store.Store) *Server {
-	s := &Server{store: st, token: config.InternalToken()}
+// New builds the API around the queue. runnerID identifies this replica in the
+// tunnel registry.
+func New(st *store.Store, runnerID string) *Server {
+	s := &Server{
+		store:        st,
+		token:        config.InternalToken(),
+		runnerID:     runnerID,
+		portal:       portalclient.New(config.PortalURL(), config.InternalToken()),
+		upgrader:     websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+		tunnels:      newTunnelRegistry(),
+		terminalSubs: newTerminalSubRegistry(),
+	}
 	mux := http.NewServeMux()
+	// Tunnels used to terminate at the bus, whose in-memory registry meant a
+	// second replica could not reach a container connected to the first. They
+	// terminate here now: the container's reachability is provisioning's fact.
+	mux.HandleFunc("GET /ws/hypervisor", s.handleHypervisorTunnelWS)
+	mux.HandleFunc("GET /ws/terminal", s.handleTerminalBridgeWS)
+	mux.HandleFunc("POST /api/v1/internal/tunnels/{name}/request", s.forwardTunnelRequestHTTP)
 	// The runner registry is this service's too: it registers itself and reports
 	// its heartbeat, and the console prunes dead rows through the bus.
 	mux.HandleFunc("POST /api/v1/internal/runners", s.registerRunner)
@@ -49,7 +75,9 @@ func (s *Server) ListenAndServe() error { return s.srv.ListenAndServe() }
 func (s *Server) Shutdown() error { return s.srv.Close() }
 
 // requireToken refuses every call unless it carries the deployment's shared
-// token; without one configured it fails closed rather than opening up.
+// token; without one configured it fails closed rather than opening up. The
+// token may also arrive as ?token= because a WebSocket handshake built from a
+// URL has no header to carry it (the gateway dials the terminal that way).
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.token == "" {
@@ -58,8 +86,13 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 		}
 		presented := r.Header.Get("Authorization")
 		const prefix = "Bearer "
-		if len(presented) <= len(prefix) || presented[:len(prefix)] != prefix ||
-			subtle.ConstantTimeCompare([]byte(presented[len(prefix):]), []byte(s.token)) != 1 {
+		token := ""
+		if len(presented) > len(prefix) && strings.EqualFold(presented[:len(prefix)], prefix) {
+			token = strings.TrimSpace(presented[len(prefix):])
+		} else {
+			token = strings.TrimSpace(r.URL.Query().Get("token"))
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}

@@ -9,9 +9,12 @@ import (
 
 // ProvisionOptions carries per-provision settings resolved from runner config.
 type ProvisionOptions struct {
-	Image    string
-	BusURL   string
-	AdminURL string
+	Image  string
+	BusURL string
+	// TunnelURL is where the container dials its hypervisor tunnel (this
+	// service). Empty means the container falls back to BusURL.
+	TunnelURL string
+	AdminURL  string
 	// BusToken is the shared token agent containers present to the bus. It is
 	// part of the deployment (the runner holds it in its own environment), so
 	// every container it provisions inherits it.
@@ -28,6 +31,16 @@ type ProvisionOptions struct {
 	// container. Empty leaves TZ unset (UTC), which is what a container without
 	// this setting gets.
 	Timezone string
+}
+
+// TunnelURLOrBus is what containers are told to dial: this service when a tunnel
+// URL is configured, the bus otherwise (an older deployment, or a rolling
+// upgrade where the agent image is already new).
+func TunnelURLOrBus(opts ProvisionOptions) string {
+	if opts.TunnelURL != "" {
+		return opts.TunnelURL
+	}
+	return opts.BusURL
 }
 
 // Provisioner creates and destroys per-user agent containers. Each backend
