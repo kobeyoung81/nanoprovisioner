@@ -4,17 +4,17 @@ package config
 type RunnerConfig struct {
 	Runner     RunnerSettings `json:"runner"      mapstructure:"runner"`
 	AgentImage string         `json:"agentImage"  mapstructure:"agentImage"`
-	BusURL string `json:"busURL" mapstructure:"busURL"` // resolved bus WebSocket URL
+	BusURL     string         `json:"busURL" mapstructure:"busURL"` // resolved bus WebSocket URL
 	// AdminURL is passed to every agent container: the agent reads its
 	// configuration from the admin module, not from the bus.
 	AdminURL string `json:"adminURL" mapstructure:"adminURL"`
-	Network    string         `json:"network"     mapstructure:"network"`
+	Network  string `json:"network"     mapstructure:"network"`
 	// NamePrefix prefixes the agent container name and the data volume name
 	// so several stacks can share one Docker daemon without collisions.
-	NamePrefix string         `json:"namePrefix"  mapstructure:"namePrefix"`
-	Backend    string         `json:"backend"     mapstructure:"backend"` // docker | swarm | k8s
-	Storage    StorageConfig  `json:"storage"     mapstructure:"storage"`
-	Quotas     QuotaConfig    `json:"quotas"      mapstructure:"quotas"`
+	NamePrefix string        `json:"namePrefix"  mapstructure:"namePrefix"`
+	Backend    string        `json:"backend"     mapstructure:"backend"` // docker | swarm | k8s
+	Storage    StorageConfig `json:"storage"     mapstructure:"storage"`
+	Quotas     QuotaConfig   `json:"quotas"      mapstructure:"quotas"`
 	// SeccompProfile is an optional daemon-host path to a custom seccomp
 	// profile. Leave it empty to use Docker's built-in profile, which is
 	// recommended: setting it replaces that profile rather than adding to it,

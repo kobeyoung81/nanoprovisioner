@@ -15,8 +15,8 @@ type ProvisionOptions struct {
 	// BusToken is the shared token agent containers present to the bus. It is
 	// part of the deployment (the runner holds it in its own environment), so
 	// every container it provisions inherits it.
-	BusToken       string
-	Network        string
+	BusToken string
+	Network  string
 	// NamePrefix prefixes both the container name and the data volume name so
 	// several stacks can share one Docker daemon without touching each
 	// other's resources. Empty keeps the historical names.
