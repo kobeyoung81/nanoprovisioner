@@ -29,7 +29,10 @@ type Server struct {
 	token string
 	// runnerID is stamped on tunnel rows so stage 6 can forward a request to the
 	// replica that holds the connection.
-	runnerID     string
+	runnerID string
+	// advertiseURL lets a replica forward a tunnel request to the one holding
+	// the connection (empty = local only).
+	advertiseURL string
 	portal       *portalclient.Client
 	upgrader     websocket.Upgrader
 	tunnels      *tunnelRegistry
@@ -38,17 +41,21 @@ type Server struct {
 
 // New builds the API around the queue. runnerID identifies this replica in the
 // tunnel registry.
-func New(st *store.Store, runnerID string) *Server {
+func New(st *store.Store, runnerID, advertiseURL string) *Server {
 	s := &Server{
 		store:        st,
 		token:        config.InternalToken(),
 		runnerID:     runnerID,
+		advertiseURL: advertiseURL,
 		portal:       portalclient.New(config.PortalURL(), config.InternalToken()),
 		upgrader:     websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
 		tunnels:      newTunnelRegistry(),
 		terminalSubs: newTerminalSubRegistry(),
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	// Tunnels used to terminate at the bus, whose in-memory registry meant a
 	// second replica could not reach a container connected to the first. They
 	// terminate here now: the container's reachability is provisioning's fact.
@@ -80,6 +87,11 @@ func (s *Server) Shutdown() error { return s.srv.Close() }
 // URL has no header to carry it (the gateway dials the terminal that way).
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A probe carries no token; liveness must not depend on one.
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if s.token == "" {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "internal token is not configured"})
 			return

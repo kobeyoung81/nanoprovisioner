@@ -107,6 +107,9 @@ func applyEnvOverrides(cfg *RunnerConfig) {
 	if v := os.Getenv("NANOSEC_RUNNER_STORAGE_CLASS"); v != "" {
 		cfg.Storage.StorageClass = v
 	}
+	if v := os.Getenv("NANOSEC_RUNNER_STORAGE_ACCESS_MODE"); v != "" {
+		cfg.Storage.AccessMode = v
+	}
 	if v := os.Getenv("NANOSEC_RUNNER_STORAGE_MOUNT_PATH"); v != "" {
 		cfg.Storage.MountPath = v
 	}
@@ -211,6 +214,9 @@ func applyRunnerStorage(st *StorageConfig, m map[string]string) {
 	}
 	if v := m["runner.storage.storageClass"]; v != "" {
 		st.StorageClass = v
+	}
+	if v := m["runner.storage.accessMode"]; v != "" {
+		st.AccessMode = v
 	}
 	if v := m["runner.storage.mountPath"]; v != "" {
 		st.MountPath = v

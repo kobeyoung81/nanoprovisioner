@@ -53,6 +53,10 @@ type StorageConfig struct {
 	DriverOptsValue string `json:"driverOptsValue" mapstructure:"driverOptsValue"`
 	// StorageClass is the k8s storage class for the per-user PVC (empty = default class).
 	StorageClass string `json:"storageClass" mapstructure:"storageClass"`
+	// AccessMode is the PVC access mode (empty = ReadWriteOnce). ReadWriteMany
+	// is only meaningful on a storage class that supports it; it lets an agent
+	// pod move between nodes while the claim stays attached.
+	AccessMode string `json:"accessMode" mapstructure:"accessMode"`
 	// MountPath is where the volume is mounted inside the agent container.
 	MountPath string `json:"mountPath" mapstructure:"mountPath"`
 	// BindPath, used only when Backend=="bind", is a host path mounted read-write

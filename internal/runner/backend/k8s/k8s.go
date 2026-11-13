@@ -193,12 +193,16 @@ func (b *Backend) ensurePVC(ctx context.Context, st config.StorageConfig, req na
 
 	url := b.baseURL + "/api/v1/namespaces/" + b.namespace + "/persistentvolumeclaims"
 	labels := map[string]string{"app": "nanosec-agent"}
+	accessMode := st.AccessMode
+	if accessMode == "" {
+		accessMode = "ReadWriteOnce"
+	}
 	claim := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "PersistentVolumeClaim",
 		"metadata":   map[string]any{"name": pvcName, "labels": labels},
 		"spec": map[string]any{
-			"accessModes": []string{"ReadWriteOnce"},
+			"accessModes": []string{accessMode},
 			"resources": map[string]any{
 				"requests": map[string]any{"storage": "1Gi"},
 			},

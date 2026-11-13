@@ -1,10 +1,14 @@
 package server
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"sync"
 	"time"
 
@@ -285,7 +289,7 @@ func (s *Server) rememberTunnel(name, userID string) {
 	if s.store == nil {
 		return
 	}
-	if err := s.store.UpsertTunnel(name, userID, s.runnerID); err != nil {
+	if err := s.store.UpsertTunnel(name, userID, s.runnerID, s.advertiseURL); err != nil {
 		slog.Warn("record tunnel failed", "tunnel", name, "error", err)
 	}
 }
@@ -305,6 +309,13 @@ func (s *Server) forgetTunnel(name string) {
 func (s *Server) forwardTunnelRequest(name string, req nanoprotocol.TunnelRequest, timeout time.Duration) (*nanoprotocol.TunnelResponse, error) {
 	hc, ok := s.tunnels.lookup(name)
 	if !ok {
+		// Another replica may hold this connection: the registry row names the
+		// runner and, when it advertises one, the URL that reaches it.
+		if resp, err := s.forwardToOtherRunner(name, req, timeout); err == nil {
+			return resp, nil
+		} else if !errors.Is(err, errTunnelOffline) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %s", errTunnelOffline, name)
 	}
 
@@ -328,6 +339,56 @@ func (s *Server) forwardTunnelRequest(name string, req nanoprotocol.TunnelReques
 	case <-time.After(timeout):
 		return nil, errors.New("tunnel request timed out")
 	}
+}
+
+// forwardToOtherRunner relays a request to the replica that holds the tunnel.
+// errTunnelOffline means no replica holds it (or this one does, and forwarding
+// to itself would loop).
+func (s *Server) forwardToOtherRunner(name string, req nanoprotocol.TunnelRequest, timeout time.Duration) (*nanoprotocol.TunnelResponse, error) {
+	if s.store == nil {
+		return nil, errTunnelOffline
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	tunnel, err := s.store.Tunnel(name)
+	if err != nil {
+		return nil, fmt.Errorf("read tunnel holder: %w", err)
+	}
+	if tunnel == nil || tunnel.RunnerURL == "" || tunnel.RunnerID == s.runnerID || tunnel.RunnerURL == s.advertiseURL {
+		return nil, errTunnelOffline
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	url := tunnel.RunnerURL + "/api/v1/internal/tunnels/" + neturl.PathEscape(name) + "/request"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if s.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.token)
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("forward to runner %s: %w", tunnel.RunnerID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errTunnelOffline
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, fmt.Errorf("runner %s answered %d", tunnel.RunnerID, resp.StatusCode)
+	}
+	var out nanoprotocol.TunnelResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode forwarded response: %w", err)
+	}
+	return &out, nil
 }
 
 // newTunnelRequestID gives every forwarded call its own correlation id.

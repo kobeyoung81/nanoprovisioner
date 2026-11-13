@@ -109,7 +109,7 @@ provisions Docker containers per user with resource quotas by tier.`,
 
 			// The console's container actions reach the queue through here; the bus
 			// forwards them so no caller had to learn a new address.
-			api := provserver.New(st, cfg.Runner.RunnerID)
+			api := provserver.New(st, cfg.Runner.RunnerID, config.AdvertiseURL())
 			go func() {
 				slog.Info("provisioner api listening", "addr", config.HTTPAddr())
 				if err := api.ListenAndServe(); err != nil && err != http.ErrServerClosed {

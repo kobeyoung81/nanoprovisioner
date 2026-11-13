@@ -7,21 +7,29 @@ package server
 // they will be in production.
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
+	"gitee.com/kobeyoung81/nanorunner/internal/store"
+	"gitee.com/kobeyoung81/nanorunner/migrations"
 	"github.com/gorilla/websocket"
 )
 
 func newTunnelTestServer(t *testing.T) *Server {
 	t.Helper()
 	t.Setenv("NANOSEC_BUS_INTERNAL_TOKEN", "s3cret")
-	return New(nil, "runner-test") // no store: the registry row is best-effort
+	return New(nil, "runner-test", "") // no store: the registry row is best-effort
 }
 
 // dialTunnel connects a fake container and completes the tunnel_register
@@ -205,5 +213,88 @@ func TestTunnelRegistry_ReplacedConnectionDoesNotUnregisterTheNewOne(t *testing.
 func TestTunnelHeartbeatTouchesTheRegistryRow(t *testing.T) {
 	if tunnelHeartbeatInterval*3 > 30*time.Second {
 		t.Fatalf("heartbeat interval %v is not comfortably inside the 30s staleness window", tunnelHeartbeatInterval)
+	}
+}
+
+// testStore opens a throwaway database with the service's manifests applied.
+func testStore(t *testing.T) *store.Store {
+	t.Helper()
+	uri := os.Getenv("NANOSEC_PROVISIONER_TEST_URI")
+	if uri == "" {
+		uri = os.Getenv("NANOSEC_ADMIN_TEST_URI")
+	}
+	if uri == "" {
+		t.Skip("NANOSEC_PROVISIONER_TEST_URI not set")
+	}
+	u, err := url.Parse(uri)
+	if err != nil {
+		t.Fatalf("parse uri: %v", err)
+	}
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	u.Path = "/provisioner_test_" + hex.EncodeToString(b[:])
+	st, err := store.Open(u.String())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	manifests, err := migrations.Load()
+	if err != nil {
+		t.Fatalf("load manifests: %v", err)
+	}
+	if _, err := st.Migrate(manifests); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.DB().Drop(context.Background())
+		_ = st.Close()
+	})
+	return st
+}
+
+// TestForwardTunnelRequest_RelaysToTheHoldingRunner: with more than one replica,
+// a request that lands on the wrong one must reach the runner that holds the
+// connection instead of answering "offline".
+func TestForwardTunnelRequest_RelaysToTheHoldingRunner(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/internal/tunnels/hypervisor-user-1/request" {
+			t.Errorf("forwarded to %s", r.URL.Path)
+		}
+		var req nanoprotocol.TunnelRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.NewEncoder(w).Encode(nanoprotocol.TunnelResponse{
+			RequestID: req.RequestID, Status: http.StatusOK, Body: []byte(`{"from":"runner-b"}`),
+		})
+	}))
+	defer remote.Close()
+
+	st := testStore(t)
+	if err := st.UpsertTunnel("hypervisor-user-1", "user-1", "runner-b", remote.URL); err != nil {
+		t.Fatalf("upsert tunnel: %v", err)
+	}
+	s := New(st, "runner-a", "http://runner-a:8080")
+
+	resp, err := s.forwardTunnelRequest("hypervisor-user-1", nanoprotocol.TunnelRequest{
+		RequestID: "r1", Method: http.MethodGet, Path: "/api/v1/files/agent-1",
+	}, 2*time.Second)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if string(resp.Body) != `{"from":"runner-b"}` {
+		t.Fatalf("body = %q", resp.Body)
+	}
+}
+
+// TestForwardTunnelRequest_DoesNotRelayToItself: a row owned by this replica
+// must stay local, or two replicas would forward to each other forever.
+func TestForwardTunnelRequest_DoesNotRelayToItself(t *testing.T) {
+	st := testStore(t)
+	if err := st.UpsertTunnel("hypervisor-user-1", "user-1", "runner-a", "http://runner-a:8080"); err != nil {
+		t.Fatalf("upsert tunnel: %v", err)
+	}
+	s := New(st, "runner-a", "http://runner-a:8080")
+
+	_, err := s.forwardTunnelRequest("hypervisor-user-1", nanoprotocol.TunnelRequest{RequestID: "r1"}, time.Second)
+	if !errors.Is(err, errTunnelOffline) {
+		t.Fatalf("err = %v, want offline (no self-forward)", err)
 	}
 }

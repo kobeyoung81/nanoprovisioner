@@ -11,7 +11,7 @@ import (
 // when none is configured. Nothing here is reachable without it.
 func TestInternalAPIRefusesWithoutTheToken(t *testing.T) {
 	t.Setenv("NANOSEC_BUS_INTERNAL_TOKEN", "s3cret")
-	s := New(nil, "")
+	s := New(nil, "", "")
 
 	cases := []struct {
 		name  string
@@ -48,12 +48,23 @@ func TestInternalAPIRefusesWithoutTheToken(t *testing.T) {
 // Without a configured token the API refuses every call instead of opening up.
 func TestInternalAPIFailsClosedWithoutAToken(t *testing.T) {
 	t.Setenv("NANOSEC_BUS_INTERNAL_TOKEN", "")
-	s := New(nil, "")
+	s := New(nil, "", "")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/containers/u1/dispose", nil)
 	rec := httptest.NewRecorder()
 	s.srv.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestHealthzIsOpenWithoutTheToken: the probe carries no token.
+func TestHealthzIsOpenWithoutTheToken(t *testing.T) {
+	t.Setenv("NANOSEC_BUS_INTERNAL_TOKEN", "s3cret")
+	s := New(nil, "", "")
+	rec := httptest.NewRecorder()
+	s.srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 }

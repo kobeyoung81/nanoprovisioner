@@ -45,7 +45,7 @@ func seedTunnelRow(t *testing.T, st *Store, name string, heartbeat time.Time) {
 func TestUpsertTunnel_KeepsRegistrationTime(t *testing.T) {
 	st := testStore(t)
 
-	if err := st.UpsertTunnel("hypervisor-user-1", "user-1", "runner-1"); err != nil {
+	if err := st.UpsertTunnel("hypervisor-user-1", "user-1", "runner-1", "http://runner-1:8080"); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 	first := readTunnel(t, st, "hypervisor-user-1")
@@ -58,7 +58,7 @@ func TestUpsertTunnel_KeepsRegistrationTime(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 	// A reconnect can land on another runner; registered_at must stay "first seen".
-	if err := st.UpsertTunnel("hypervisor-user-1", "user-1", "runner-2"); err != nil {
+	if err := st.UpsertTunnel("hypervisor-user-1", "user-1", "runner-2", "http://runner-2:8080"); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 
@@ -69,8 +69,8 @@ func TestUpsertTunnel_KeepsRegistrationTime(t *testing.T) {
 	if !again.HeartbeatAt.After(first.HeartbeatAt) {
 		t.Fatalf("heartbeat_at was not refreshed: %v → %v", first.HeartbeatAt, again.HeartbeatAt)
 	}
-	if again.RunnerID != "runner-2" {
-		t.Fatalf("the reconnect did not move the runner: %q", again.RunnerID)
+	if again.RunnerID != "runner-2" || again.RunnerURL != "http://runner-2:8080" {
+		t.Fatalf("the reconnect did not move the runner: %+v", again)
 	}
 }
 

@@ -23,16 +23,19 @@ const tunnelsCollection = "provisioner_tunnels"
 
 // Tunnel is one registered hypervisor tunnel.
 type Tunnel struct {
-	Name         string    `bson:"_id"`
-	UserID       string    `bson:"user_id"`
-	RunnerID     string    `bson:"runner_id"`
+	Name     string `bson:"_id"`
+	UserID   string `bson:"user_id"`
+	RunnerID string `bson:"runner_id"`
+	// RunnerURL is where the holding runner accepts forwarded requests, so a
+	// replica that does not hold this tunnel can relay to it.
+	RunnerURL    string    `bson:"runner_url,omitempty"`
 	RegisteredAt time.Time `bson:"registered_at"`
 	HeartbeatAt  time.Time `bson:"heartbeat_at"`
 }
 
 // UpsertTunnel records a tunnel connection. registered_at is $setOnInsert: it is
 // when the container first connected, and a reconnect must not rewrite it.
-func (s *Store) UpsertTunnel(name, userID, runnerID string) error {
+func (s *Store) UpsertTunnel(name, userID, runnerID, runnerURL string) error {
 	ctx, cancel := opCtx()
 	defer cancel()
 
@@ -44,6 +47,7 @@ func (s *Store) UpsertTunnel(name, userID, runnerID string) error {
 				{Key: "$set", Value: bson.D{
 					{Key: "user_id", Value: userID},
 					{Key: "runner_id", Value: runnerID},
+					{Key: "runner_url", Value: runnerURL},
 					{Key: "heartbeat_at", Value: now},
 				}},
 				{Key: "$setOnInsert", Value: bson.D{{Key: "registered_at", Value: now}}},

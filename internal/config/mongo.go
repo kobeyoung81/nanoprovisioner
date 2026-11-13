@@ -16,6 +16,12 @@ func MongoURI() string {
 	return strings.TrimSpace(os.Getenv("NANOSEC_BUS_DATABASE_URI"))
 }
 
+// AdvertiseURL is how another replica reaches this one's internal API. Empty
+// disables cross-replica tunnel forwarding.
+func AdvertiseURL() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("NANOSEC_RUNNER_ADVERTISE_URL")), "/")
+}
+
 // HTTPAddr is where the provisioner's internal API listens. The bus forwards the
 // console's container actions here.
 func HTTPAddr() string {
