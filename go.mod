@@ -3,8 +3,10 @@ module gitee.com/kobeyoung81/nanorunner
 go 1.25.0
 
 require (
-	gitee.com/kobeyoung81/nanoprotocol v0.45.0
+	gitee.com/kobeyoung81/nanoprotocol v0.46.0
 	github.com/docker/docker v27.0.0+incompatible
+	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/spf13/cobra v1.8.1
 	go.mongodb.org/mongo-driver/v2 v2.9.2
 )
@@ -20,8 +22,6 @@ require (
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
