@@ -66,11 +66,15 @@ func (s *Store) CountOnlineRunners() (int, error) {
 
 // ContainerSummary is one row of the console's container list.
 type ContainerSummary struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
+	ID      string `json:"id"`
+	UserID  string `json:"user_id"`
+	AgentID string `json:"agent_id,omitempty"`
+	// BindingID is the channel binding the container belongs to, when it has one.
+	BindingID int64     `json:"binding_id,omitempty"`
 	Level     string    `json:"level"`
 	Status    string    `json:"status"`
 	RunnerID  string    `json:"runner_id"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -102,10 +106,14 @@ func (s *Store) ListContainerSummaries(userID string, limit int) ([]ContainerSum
 		if err := cur.Decode(&doc); err != nil {
 			return nil, fmt.Errorf("decode container request: %w", err)
 		}
-		out = append(out, ContainerSummary{
-			ID: doc.ID.Hex(), UserID: doc.UserID, Level: doc.Level,
-			Status: doc.Status, RunnerID: doc.RunnerID, UpdatedAt: doc.UpdatedAt,
-		})
+		summary := ContainerSummary{
+			ID: doc.ID.Hex(), UserID: doc.UserID, AgentID: doc.AgentID, Level: doc.Level,
+			Status: doc.Status, RunnerID: doc.RunnerID, CreatedAt: doc.CreatedAt, UpdatedAt: doc.UpdatedAt,
+		}
+		if doc.BindingID != nil {
+			summary.BindingID = *doc.BindingID
+		}
+		out = append(out, summary)
 	}
 	return out, cur.Err()
 }
