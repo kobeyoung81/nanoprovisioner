@@ -71,6 +71,12 @@ func New(st *store.Store, runnerID, advertiseURL string) *Server {
 	mux.HandleFunc("POST /api/v1/internal/containers/{userID}/dispose", s.dispose)
 	mux.HandleFunc("POST /api/v1/internal/containers/{userID}/restart", s.restart)
 	mux.HandleFunc("POST /api/v1/internal/containers/{userID}/reprovision", s.reprovision)
+
+	// The console's reads: this module owns the queue and the runner registry.
+	mux.HandleFunc("GET /api/v1/internal/console/runners", s.restConsoleRunners)
+	mux.HandleFunc("GET /api/v1/internal/console/runners/counts", s.restConsoleRunnerCounts)
+	mux.HandleFunc("GET /api/v1/internal/console/containers", s.restConsoleContainers)
+	mux.HandleFunc("GET /api/v1/internal/console/containers/counts", s.restConsoleContainerCounts)
 	s.srv = &http.Server{Addr: config.HTTPAddr(), Handler: s.requireToken(mux), ReadHeaderTimeout: 10 * time.Second}
 	return s
 }
