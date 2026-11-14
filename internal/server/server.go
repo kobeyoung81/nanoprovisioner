@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"gitee.com/kobeyoung81/nanorunner/internal/config"
+	"gitee.com/kobeyoung81/nanorunner/internal/metrics"
 	"gitee.com/kobeyoung81/nanorunner/internal/portalclient"
 	"gitee.com/kobeyoung81/nanorunner/internal/store"
 	"github.com/gorilla/websocket"
@@ -37,6 +38,10 @@ type Server struct {
 	upgrader     websocket.Upgrader
 	tunnels      *tunnelRegistry
 	terminalSubs *terminalSubRegistry
+	// holderCache is the five-second memory of who holds a tunnel on another
+	// replica; drain is the rolling-restart switch.
+	holderCache *tunnelHolderCache
+	drain       *drainState
 }
 
 // New builds the API around the queue. runnerID identifies this replica in the
@@ -51,6 +56,8 @@ func New(st *store.Store, runnerID, advertiseURL string) *Server {
 		upgrader:     websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
 		tunnels:      newTunnelRegistry(),
 		terminalSubs: newTerminalSubRegistry(),
+		holderCache:  newTunnelHolderCache(tunnelHolderTTL),
+		drain:        &drainState{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -62,6 +69,7 @@ func New(st *store.Store, runnerID, advertiseURL string) *Server {
 	mux.HandleFunc("GET /ws/hypervisor", s.handleHypervisorTunnelWS)
 	mux.HandleFunc("GET /ws/terminal", s.handleTerminalBridgeWS)
 	mux.HandleFunc("POST /api/v1/internal/tunnels/{name}/request", s.forwardTunnelRequestHTTP)
+	mux.HandleFunc("POST /api/v1/internal/tunnels/drain", s.restDrainTunnels)
 	// The runner registry is this service's too: it registers itself and reports
 	// its heartbeat, and the console prunes dead rows through the bus.
 	mux.HandleFunc("POST /api/v1/internal/runners", s.registerRunner)
@@ -77,7 +85,13 @@ func New(st *store.Store, runnerID, advertiseURL string) *Server {
 	mux.HandleFunc("GET /api/v1/internal/console/runners/counts", s.restConsoleRunnerCounts)
 	mux.HandleFunc("GET /api/v1/internal/console/containers", s.restConsoleContainers)
 	mux.HandleFunc("GET /api/v1/internal/console/containers/counts", s.restConsoleContainerCounts)
-	s.srv = &http.Server{Addr: config.HTTPAddr(), Handler: s.requireToken(mux), ReadHeaderTimeout: 10 * time.Second}
+	// Operational numbers, anonymous: a scraper is infrastructure, not a caller.
+	mux.Handle("GET /metrics", metrics.Handler())
+	s.srv = &http.Server{
+		Addr:              config.HTTPAddr(),
+		Handler:           metrics.Middleware(s.requireToken(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	return s
 }
 
@@ -94,7 +108,7 @@ func (s *Server) Shutdown() error { return s.srv.Close() }
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// A probe carries no token; liveness must not depend on one.
-		if r.URL.Path == "/healthz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}

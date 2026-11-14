@@ -298,3 +298,24 @@ func TestForwardTunnelRequest_DoesNotRelayToItself(t *testing.T) {
 		t.Fatalf("err = %v, want offline (no self-forward)", err)
 	}
 }
+
+// dialRaw opens the tunnel socket and completes the register handshake, returning
+// the error instead of failing the test: the drain rule needs the refusal.
+func dialRaw(t *testing.T, srv *httptest.Server, userID string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/hypervisor?token=s3cret"
+	conn, resp, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		return nil, resp, err
+	}
+	register, err := nanoprotocol.NewMessage(nanoprotocol.TypeTunnelRegister, nanoprotocol.TunnelRegister{UserID: userID})
+	if err != nil {
+		_ = conn.Close()
+		return nil, resp, err
+	}
+	if err := conn.WriteJSON(register); err != nil {
+		_ = conn.Close()
+		return nil, resp, err
+	}
+	return conn, resp, nil
+}

@@ -68,3 +68,25 @@ func TestHealthzIsOpenWithoutTheToken(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 }
+
+// TestMetricsIsAnonymous: a scraper is infrastructure, not a caller. It answers on
+// the internal port without a token, next to /healthz, and the rest of the API
+// still refuses one.
+func TestMetricsIsAnonymous(t *testing.T) {
+	t.Setenv("NANOSEC_BUS_INTERNAL_TOKEN", "s3cret")
+	s := New(nil, "runner-test", "")
+	rec := httptest.NewRecorder()
+	s.srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "provisioner_active_tunnels") {
+		t.Fatalf("the exposition has no provisioner metric: %s", rec.Body.String()[:200])
+	}
+
+	rec = httptest.NewRecorder()
+	s.srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/internal/console/runners", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("an unauthenticated API call returned %d, want 401", rec.Code)
+	}
+}

@@ -5,6 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
+
+	"gitee.com/kobeyoung81/nanorunner/internal/metrics"
 
 	"gitee.com/kobeyoung81/nanoprotocol"
 )
@@ -37,16 +41,72 @@ func (s *Server) forwardTunnelRequestHTTP(w http.ResponseWriter, r *http.Request
 	if req.RequestID == "" {
 		req.RequestID = newTunnelRequestID()
 	}
-
-	resp, err := s.forwardTunnelRequest(name, req, tunnelRequestTimeout)
-	if err != nil {
-		if errors.Is(err, errTunnelOffline) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is offline"})
-			return
-		}
-		slog.Warn("forward tunnel request failed", "tunnel", name, "request_id", req.RequestID, "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "tunnel forward failed"})
+	metrics.TunnelBodyBytes.Observe(float64(len(req.Body)))
+	if len(req.Body) > maxTunnelBodyBytes {
+		// Base64 inside a WebSocket frame costs a third more bytes and holds the
+		// whole body in memory at both ends. Refuse it here, at the boundary,
+		// with a message that says what to do instead of a generic 502.
+		metrics.TunnelRequests.WithLabelValues("too_large").Inc()
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+			"error": "the request body is larger than the 2 MiB tunnel limit; large files are not carried over the tunnel",
+		})
 		return
 	}
+
+	start := time.Now()
+	resp, err := s.forwardTunnelRequest(name, req, tunnelRequestTimeout)
+	metrics.TunnelRequestSeconds.Observe(time.Since(start).Seconds())
+	if err != nil {
+		switch {
+		case errors.Is(err, errTunnelOffline):
+			metrics.TunnelRequests.WithLabelValues("offline").Inc()
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is offline"})
+		case errors.Is(err, errTunnelBusy):
+			metrics.TunnelRequests.WithLabelValues("busy").Inc()
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{
+				"error": "too many requests in flight on this container; retry shortly",
+			})
+		default:
+			outcome := "failed"
+			if strings.Contains(err.Error(), "timed out") {
+				outcome = "timeout"
+			}
+			metrics.TunnelRequests.WithLabelValues(outcome).Inc()
+			slog.Warn("forward tunnel request failed", "tunnel", name, "request_id", req.RequestID, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "tunnel forward failed"})
+		}
+		return
+	}
+	metrics.TunnelRequests.WithLabelValues("ok").Inc()
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// restDrainTunnels is the rolling-restart switch: stop accepting new tunnels,
+// keep the live ones until the deadline, then close them. A reverse proxy takes
+// this replica out of rotation first, so the containers reconnect to a replica
+// that is staying.
+//
+//	POST /api/v1/internal/tunnels/drain {"deadline_seconds": 60}
+func (s *Server) restDrainTunnels(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		DeadlineSeconds int `json:"deadline_seconds"`
+	}
+	// An empty body is a 60-second drain; a bad body is the caller's mistake.
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+	}
+	deadline := time.Duration(body.DeadlineSeconds) * time.Second
+	if deadline <= 0 {
+		deadline = defaultDrainDeadline
+	}
+	live, until := s.StartDrain(deadline)
+	slog.Info("tunnel drain started", "connections", live, "deadline", until)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"draining":    true,
+		"connections": live,
+		"deadline":    until.UTC().Format(time.RFC3339),
+	})
 }
