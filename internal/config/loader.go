@@ -92,6 +92,13 @@ func applyEnvOverrides(cfg *RunnerConfig) {
 	if v := os.Getenv("NANOSEC_RUNNER_AGENT_IMAGE"); v != "" {
 		cfg.AgentImage = v
 	}
+	// The prefix is how several stacks share one Docker daemon: it is prepended
+	// to the agent container and the per-user data volume, so `stg-` yields
+	// stg-nanosec-agent-<id> / stg-nanosec-data-<id>. Deriving it from the same
+	// variable as the compose project keeps one knob per deployment.
+	if v := os.Getenv("NANOSEC_RUNNER_NAME_PREFIX"); v != "" {
+		cfg.NamePrefix = v
+	}
 	if v := os.Getenv("NANOSEC_RUNNER_BACKEND"); v != "" {
 		cfg.Backend = v
 	}

@@ -87,6 +87,9 @@ func TestApplyRunnerConfigOverrides(t *testing.T) {
 func TestApplyEnvOverrides(t *testing.T) {
 	t.Setenv("NANOSEC_RUNNER_NETWORK", "devmyriadmind_default")
 	t.Setenv("NANOSEC_RUNNER_AGENT_IMAGE", "registry.example.com/nanosec:dev")
+	// One variable drives the stack's Docker names: the same prefix that names the
+	// compose project also names the agent containers and their volumes.
+	t.Setenv("NANOSEC_RUNNER_NAME_PREFIX", "stg-")
 
 	cfg := applyRunnerConfig(map[string]string{
 		"network":    "myriadmind_default",
@@ -100,11 +103,15 @@ func TestApplyEnvOverrides(t *testing.T) {
 	if cfg.AgentImage != "registry.example.com/nanosec:dev" {
 		t.Errorf("AgentImage = %q, want env override registry.example.com/nanosec:dev", cfg.AgentImage)
 	}
+	if cfg.NamePrefix != "stg-" {
+		t.Errorf("NamePrefix = %q, want env override stg-", cfg.NamePrefix)
+	}
 }
 
 func TestApplyEnvOverrides_EmptyEnvKeepsConfig(t *testing.T) {
 	t.Setenv("NANOSEC_RUNNER_NETWORK", "")
 	t.Setenv("NANOSEC_RUNNER_AGENT_IMAGE", "")
+	t.Setenv("NANOSEC_RUNNER_NAME_PREFIX", "")
 
 	cfg := applyRunnerConfig(map[string]string{
 		"network":    "overlay-net",
