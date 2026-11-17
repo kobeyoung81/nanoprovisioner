@@ -3,7 +3,7 @@ module gitee.com/kobeyoung81/nanorunner
 go 1.25.0
 
 require (
-	gitee.com/kobeyoung81/nanoprotocol v0.46.0
+	gitee.com/kobeyoung81/nanoprotocol v0.47.0
 	github.com/docker/docker v27.0.0+incompatible
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
