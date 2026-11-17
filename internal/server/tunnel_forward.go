@@ -46,9 +46,8 @@ func (s *Server) forwardTunnelRequestHTTP(w http.ResponseWriter, r *http.Request
 		// base64'd twice and held whole at both ends. Point the caller at the
 		// streamed endpoint instead of failing with a generic 502.
 		metrics.TunnelRequests.WithLabelValues("too_large").Inc()
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-			"error": "the request body is larger than the inline tunnel limit; use the streamed /proxy endpoint",
-		})
+		writeRelayError(w, http.StatusRequestEntityTooLarge, "too_large",
+			"the request body is larger than the inline tunnel limit; use the streamed /proxy endpoint")
 		return
 	}
 

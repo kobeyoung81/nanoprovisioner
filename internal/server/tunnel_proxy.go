@@ -113,9 +113,8 @@ func (s *Server) forwardChunkedBody(w http.ResponseWriter, r *http.Request, name
 		// Sending chunks to a pre-streaming hypervisor would silently lose the
 		// body; a 413 that says what to do is better than a 502 that does not.
 		metrics.TunnelRequests.WithLabelValues("too_large").Inc()
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-			"error": "this container's image predates large-file transfer; restart it and retry",
-		})
+		writeRelayError(w, http.StatusRequestEntityTooLarge, "too_large",
+			"this container's image predates large-file transfer; restart it and retry")
 		return
 	}
 
@@ -405,18 +404,27 @@ func copyTunnelHeaders(dst http.Header, src map[string][]string) {
 	}
 }
 
+// relayErrorHeader marks an answer this relay produced itself, so the caller does
+// not mistake it for the container's status (a container 404 means "no such
+// file", a relay 404 means "no such container").
+const relayErrorHeader = "X-Tunnel-Relay-Error"
+
+func writeRelayError(w http.ResponseWriter, status int, kind, message string) {
+	w.Header().Set(relayErrorHeader, kind)
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
 // writeTunnelError keeps the two failures distinct for the caller: 404 means no
 // container is online, 502 means it is online but the forward failed.
 func writeTunnelError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errTunnelOffline):
 		metrics.TunnelRequests.WithLabelValues("offline").Inc()
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is offline"})
+		writeRelayError(w, http.StatusNotFound, "offline", "tunnel is offline")
 	case errors.Is(err, errTunnelBusy):
 		metrics.TunnelRequests.WithLabelValues("busy").Inc()
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{
-			"error": "too many requests in flight on this container; retry shortly",
-		})
+		writeRelayError(w, http.StatusTooManyRequests, "busy",
+			"too many requests in flight on this container; retry shortly")
 	default:
 		outcome := "failed"
 		if strings.Contains(err.Error(), "timed out") {
@@ -424,6 +432,6 @@ func writeTunnelError(w http.ResponseWriter, err error) {
 		}
 		metrics.TunnelRequests.WithLabelValues(outcome).Inc()
 		slog.Warn("forward tunnel request failed", "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "tunnel forward failed"})
+		writeRelayError(w, http.StatusBadGateway, "failed", "tunnel forward failed")
 	}
 }
