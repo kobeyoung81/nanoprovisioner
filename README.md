@@ -1,182 +1,115 @@
-# nanorunner
+# nanoprovisioner
 
-Container provisioning service for MyriadMind.
+Containers and tunnels: the module that asks Docker, Swarm or Kubernetes for a
+user's agent container, and the place the platform's tunnels terminate.
 
-## Overview
+It is one of the eight first-class services. The binary and the compose service are
+still called `nanorunner`; the repository, image and prefix are `nanoprovisioner` /
+`provisioner_`.
 
-`nanorunner` polls the bus (`nanobus`) for pending container requests, provisions a container (or service) per user/agent with resource limits based on tier, and reports status back to the bus. It supports three pluggable provisioner backends — **docker**, **swarm**, and **k8s** — selected at runtime via the `runner.backend` config item.
+## What it is
 
-## Architecture
+- **A container request queue.** A user or an operator asks; this module turns the
+  request into a container with the tier's limits.
+- **Three backends.** Docker on one host, Swarm, or Kubernetes — chosen by
+  `runner.backend`, with per-tier memory, CPU and storage.
+- **The tunnel endpoint.** Hypervisors and terminals connect here; a request for a
+  connection this replica does not hold is relayed to the one that does.
+- **A runner registry.** Every runner keeps a row with a heartbeat, so the fleet is
+  visible and stale rows can be pruned.
+- **Storage that survives a node.** Optional shared-volume provisioning for
+  clusters, so a container can be rebuilt somewhere else.
 
-```
-nanorunner
-  |-- runner/
-  |   |-- runner.go      (poll loop, request dispatch)
-  |   |-- provisioner.go (Provisioner interface)
-  |   |-- backend/
-  |       |-- docker/    (Docker SDK: containers + resource limits)
-  |       |-- swarm/     (Docker Swarm: single-replica services per user)
-  |       |-- k8s/       (Kubernetes: per-user Deployments via in-cluster client)
-  |
-  |-- config/
-  |   |-- config.go      (RunnerConfig, quotas)
-  |   |-- loader.go      (bus-backed config loader)
-  |
-  |-- WebSocket --> nanobus (PollPendingContainers, UpdateContainerStatus, RegisterRunner)
-  |
-  Docker Engine / Swarm manager / kube-apiserver
-```
+## Where it sits
 
-## Lifecycle
+| | |
+|---|---|
+| Collections | `provisioner_container_requests`, `provisioner_runners`, `provisioner_tunnels` |
+| Port | `8080` in the network |
+| Upstream | `nanobus` (requests from onboarding), `nanoportal` (a console action), `nanoadmin` (restart and dispose) |
+| Downstream | the container runtime — Docker socket, Swarm manager or the Kubernetes API — and the agent containers it creates |
+| Health | `GET /healthz`, plus `/metrics` |
 
-```
-1. Startup
-   - Load config from bus (backend, agentImage, network, quotas)
-   - Register as a runner: RegisterRunner(runnerID, hostname, dockerHost)
-
-2. Poll Loop (every PollInterval seconds)
-   - PollPendingContainers(runnerID)
-   - For each pending request:
-     a. Determine quota by user tier (free/pro/ultra)
-     b. Provisioner.Provision(...)  -- container (docker), service (swarm), or Deployment (k8s)
-     c. UpdateContainerStatus(userID, bindingID, "running")
-     d. UpdateUserStatus(userID, "active")
-
-3. Admin dispose
-   - Deletion goes through the `disposing` -> `disposed` lifecycle (migration 023)
-```
-
-## Provisioner Backends
-
-| Backend | Config value | Provision unit | Notes |
-|---------|--------------|----------------|-------|
-| Docker | `docker` (default) | container | Local/remote Docker Engine via socket |
-| Swarm | `swarm` | single-replica service | One service per user with resource limits |
-| Kubernetes | `k8s` | Deployment | In-cluster client; RBAC in `deploy/k8s/rbac.yaml` |
-
-The backend is set with the bus config item:
+## Quick start
 
 ```bash
-nanobus config set runner runner.backend swarm
+go build ./cmd/nanorunner
+NANOSEC_PROVISIONER_MONGO_URI="mongodb://localhost:27017/nanosec" \
+NANOSEC_RUNNER_BACKEND=docker \
+NANOSEC_RUNNER_AGENT_IMAGE=docker.io/kobeyoung81/nanoagent:0.1.0 \
+NANOSEC_RUNNER_BUS_URL="http://localhost:9000" \
+NANOSEC_BUS_INTERNAL_TOKEN="…" \
+  ./nanorunner
 ```
 
-## Quota Tiers
-
-Per-tier limits are stored as config items `runner.quota.<tier>.memory` (MB) and
-`runner.quota.<tier>.cpu` (nanoCPUs; `1e9` = 1 CPU).
-
-| Tier | Memory | CPU |
-|------|--------|-----|
-| `free` | 512 MB | 1 CPU |
-| `pro` | 2048 MB | 2 CPU |
-| `ultra` | 4096 MB | 4 CPU |
-
-## Container Details
-
-- **Naming**: deterministic per (user, binding) — e.g. `nanosec-agent-{userID}-{bindingID}`
-- **Image**: config item `agentImage` (default `kobeyoung81/nanosec:latest`)
-- **Network**: config item `network` (default `nanosec_default`)
-- **Timezone**: config item `runner.agentTimezone` (default `Asia/Shanghai`), injected as the `TZ` environment variable (empty = no `TZ`, i.e. UTC). The agent image sets no timezone, so without it prompt dates, cron schedules and git timestamps run in UTC. The value is re-read from the bus before every provisioning, so changing it takes effect on the next container created or restarted — no runner restart needed.
-- **Bus URL**: passed as an environment variable to the agent container
-- **Lifecycle**: containers persist the agent state on a mounted volume
-
-## Provisioner Interface
-
-```go
-type Provisioner interface {
-    Provision(ctx context.Context, req nanoprotocol.ContainerRequest, opts ProvisionOptions) error
-    Deprovision(ctx context.Context, req nanoprotocol.ContainerRequest, opts ProvisionOptions) error
-}
-```
-
-The interface enables easy mocking for unit tests of the `Runner`.
-
-## CLI Reference
-
-```bash
-nanorunner                               # Start runner service
-nanorunner --bus-url ws://bus:9000        # Specify bus URL
-nanorunner --runner-id nanorunner         # Pin a stable runner identity (recommended)
-nanorunner version                        # Print version info
-```
-
-> **Stable runner identity**: pass `--runner-id <name>` (or set the `runner.runnerID`
-> config item) so every restart reuses the same `runners` row instead of inserting a
-> new one per deploy. The bus marks runners whose heartbeat goes stale (default 2 min)
-> as `offline` and exposes `DELETE /api/v1/runners/{id}` for pruning dead rows by hand.
+The Docker backend needs the socket mounted (`/var/run/docker.sock`); the Swarm
+backend needs a manager; the Kubernetes backend needs a service account that may
+create pods, services and persistent volume claims.
 
 ## Configuration
 
-Loaded from the bus at startup via `GetConfigItems("runner")` (seeded by `nanoadmin config seed`).
+| Variable | Meaning |
+|---|---|
+| `NANOSEC_PROVISIONER_MONGO_URI` | The platform database |
+| `NANOSEC_PROVISIONER_ADDR` | Listen address, default `:8080` |
+| `NANOSEC_RUNNER_BACKEND` | `docker`, `swarm` or `k8s` |
+| `NANOSEC_RUNNER_AGENT_IMAGE` | The agent image every container runs |
+| `NANOSEC_RUNNER_BUS_URL` | The container's bus URL, passed into the container |
+| `NANOSEC_RUNNER_NETWORK` | Docker/Swarm network the containers join |
+| `NANOSEC_RUNNER_NAME_PREFIX` | Prefix for container names — one prefix names a stack |
+| `NANOSEC_RUNNER_ADVERTISE_URL` | The address peers use to relay a tunnel here |
+| `NANOSEC_RUNNER_STORAGE_BACKEND` / `…_ACCESS_MODE` | Shared-volume backend and access mode (`ReadWriteMany` for clusters) |
+| `NANOSEC_BUS_INTERNAL_TOKEN` | Shared secret for every internal surface |
 
-```json
-{
-  "runner": {
-    "pollInterval": 5,
-    "runnerID": "myhost",
-    "backend": "docker"
-  },
-  "agentImage": "kobeyoung81/nanosec:latest",
-  "agentTimezone": "Asia/Shanghai",
-  "network": "nanosec_default",
-  "quotas": {
-    "free":  { "memoryMB": 512,  "cpus": 1000000000 },
-    "pro":   { "memoryMB": 2048, "cpus": 2000000000 },
-    "ultra": { "memoryMB": 4096, "cpus": 4000000000 }
-  }
-}
-```
+Quotas, timezone, image overrides and the storage class are configuration items in
+`admin_config` (`runner.*`), not environment variables.
 
-Environment prefix: `NANOSEC_RUNNER_` (e.g., `NANOSEC_RUNNER_BUS_URL`).
+## API
 
-### Network resolution
+| Surface | What it does |
+|---|---|
+| `POST /api/v1/internal/containers` | Enqueue a container request |
+| `POST /api/v1/internal/containers/{userID}/restart`, `/reprovision` | Ask for a new container |
+| `POST /api/v1/internal/containers/{userID}/dispose` | Remove one |
+| `GET /ws/hypervisor` | A hypervisor registers its tunnel |
+| `POST /api/v1/internal/tunnels/{name}/request` | Relay a request through a tunnel |
+| `POST /api/v1/internal/tunnels/drain` | Mark this replica as draining before a rollout |
+| `GET /ws/terminal` | The terminal bridge |
+| `POST` / `DELETE /api/v1/internal/runners[/{id}]` | Register or prune a runner |
 
-The `network` config item names the Docker network agent containers attach to
-(default `nanosec_default`). Because the actual network name depends on the
-Compose project name, `nanorunner` resolves it as follows:
+## Design decisions
 
-1. `NANOSEC_RUNNER_NETWORK` env var (explicit override)
-2. the `network` config item, if a network with that name exists on the daemon
-3. the network the runner container itself is attached to (auto-detected)
+- **Tunnels terminate here, not at the bus.** The registry is
+  `provisioner_tunnels`; a request that arrives at the wrong replica is relayed to
+  the one holding the connection, so no sticky routing is needed.
+- **Drain before a rollout.** Tunnels are long-lived; a replica that is about to
+  restart announces it so new registrations land elsewhere.
+- **The queue is idempotent per agent.** Asking twice for the same agent does not
+  create two containers.
+- **Storage is a capability, not an assumption.** Without a shared volume a container
+  can only be rebuilt on the same node; with one, anywhere.
+- **At least three replicas in a cluster.** Each container holds one connection;
+  capacity is roughly 60 KB per idle tunnel plus the transfer buffers.
 
-`NANOSEC_RUNNER_AGENT_IMAGE` similarly overrides the `agentImage` config item,
-and `NANOSEC_RUNNER_AGENT_TIMEZONE` overrides `runner.agentTimezone`.
+## Docs
 
-## Deployment
+- [`docs/DEPLOYMENT.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/docs/DEPLOYMENT.md) — compose, Swarm, Kubernetes and the tunnel capacity rules
+- [`docs/ARCHITECTURE.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/docs/ARCHITECTURE.md) — the platform around this module
+- [`docs/README.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/docs/README.md) — every document
 
-### Requirements
-- Docker Engine with accessible socket (`/var/run/docker.sock`) — or Swarm/K8s credentials for the other backends
-- Network access to `nanobus` WebSocket endpoint
+## Status
 
-### Docker
-```bash
-docker build -t nanorunner .
-docker run -v /var/run/docker.sock:/var/run/docker.sock nanorunner --bus-url ws://nanobus:9000
-```
+Released as part of `v0.1.0`; the version of this module is pinned in the
+super-repo's `versions.lock`.
 
-### Docker Compose
-Part of top-level `docker-compose.yml` (docker backend, mounts the host socket).
+## Contributing and security
 
-### Docker Swarm
-Use `deploy/swarm/docker-stack.yml` from the super-repo and set `runner.backend=swarm`.
+[`CONTRIBUTING.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/CONTRIBUTING.md)
+for setup and commit rules; report vulnerabilities privately through
+[`SECURITY.md`](https://gitee.com/kobeyoung81/nanosec/blob/master/SECURITY.md), never
+in a public issue.
 
-### Kubernetes
-Apply `nanorunner/deploy/k8s/rbac.yaml` + `runner.yaml` from the super-repo and set `runner.backend=k8s`.
+## License
 
-### Standalone
-```bash
-go build ./cmd/nanorunner
-./nanorunner --bus-url ws://localhost:9000
-```
-
-## Packages
-
-| Package | Purpose |
-|---------|---------|
-| `cmd/nanorunner` | CLI entry point |
-| `internal/runner` | Poll loop, lifecycle, Provisioner interface |
-| `internal/runner/backend/docker` | Docker SDK container provisioning |
-| `internal/runner/backend/swarm` | Swarm service provisioning |
-| `internal/runner/backend/k8s` | Kubernetes Deployment provisioning |
-| `internal/config` | Configuration types and bus-backed loader |
-| `internal/log` | Custom slog log level |
+[AGPL-3.0](./LICENSE). The name and logo are covered separately — see
+[`NOTICE`](./NOTICE).
