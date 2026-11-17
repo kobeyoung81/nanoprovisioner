@@ -34,6 +34,7 @@ var (
 
 func main() {
 	setupLogger()
+	provserver.Version = version
 
 	var busURL string
 	var runnerID string

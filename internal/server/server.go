@@ -61,7 +61,7 @@ func New(st *store.Store, runnerID, advertiseURL string) *Server {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
 	})
 	// Tunnels used to terminate at the bus, whose in-memory registry meant a
 	// second replica could not reach a container connected to the first. They
