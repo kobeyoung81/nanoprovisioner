@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"gitee.com/kobeyoung81/nanorunner/internal/metrics"
@@ -42,13 +41,13 @@ func (s *Server) forwardTunnelRequestHTTP(w http.ResponseWriter, r *http.Request
 		req.RequestID = newTunnelRequestID()
 	}
 	metrics.TunnelBodyBytes.Observe(float64(len(req.Body)))
-	if len(req.Body) > maxTunnelBodyBytes {
-		// Base64 inside a WebSocket frame costs a third more bytes and holds the
-		// whole body in memory at both ends. Refuse it here, at the boundary,
-		// with a message that says what to do instead of a generic 502.
+	if len(req.Body) > maxTunnelInlineBody {
+		// This endpoint answers with one JSON message, so a large body would be
+		// base64'd twice and held whole at both ends. Point the caller at the
+		// streamed endpoint instead of failing with a generic 502.
 		metrics.TunnelRequests.WithLabelValues("too_large").Inc()
 		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-			"error": "the request body is larger than the 2 MiB tunnel limit; large files are not carried over the tunnel",
+			"error": "the request body is larger than the inline tunnel limit; use the streamed /proxy endpoint",
 		})
 		return
 	}
@@ -57,27 +56,17 @@ func (s *Server) forwardTunnelRequestHTTP(w http.ResponseWriter, r *http.Request
 	resp, err := s.forwardTunnelRequest(name, req, tunnelRequestTimeout)
 	metrics.TunnelRequestSeconds.Observe(time.Since(start).Seconds())
 	if err != nil {
-		switch {
-		case errors.Is(err, errTunnelOffline):
-			metrics.TunnelRequests.WithLabelValues("offline").Inc()
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "tunnel is offline"})
-		case errors.Is(err, errTunnelBusy):
-			metrics.TunnelRequests.WithLabelValues("busy").Inc()
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{
-				"error": "too many requests in flight on this container; retry shortly",
-			})
-		default:
-			outcome := "failed"
-			if strings.Contains(err.Error(), "timed out") {
-				outcome = "timeout"
-			}
-			metrics.TunnelRequests.WithLabelValues(outcome).Inc()
-			slog.Warn("forward tunnel request failed", "tunnel", name, "request_id", req.RequestID, "error", err)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "tunnel forward failed"})
+		if errors.Is(err, errTunnelBusy) {
+			writeTunnelError(w, err)
+			return
 		}
+		slog.Warn("forward tunnel request failed", "tunnel", name, "request_id", req.RequestID, "error", err)
+		writeTunnelError(w, err)
 		return
 	}
 	metrics.TunnelRequests.WithLabelValues("ok").Inc()
+	// This endpoint keeps its JSON envelope: callers older than the streamed
+	// path still decode TunnelResponse from it.
 	writeJSON(w, http.StatusOK, resp)
 }
 

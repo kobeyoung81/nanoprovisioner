@@ -32,16 +32,22 @@ const (
 	// because the two answer different questions ("is this container reachable"
 	// vs "is this host alive").
 	tunnelHeartbeatInterval = 10 * time.Second
-	tunnelReadLimit         = 1 << 20
+	// tunnelReadLimit bounds one inbound frame. A body at or below
+	// TunnelInlineBodyBytes rides in one message (about 341 KiB once base64'd);
+	// anything larger is chunked at TunnelChunkBytes, so a frame never comes
+	// near this. It is a guard against a broken peer, not a transfer cap: the
+	// old 1 MiB frame limit was the reason a 5 MB download killed the tunnel.
+	tunnelReadLimit = 1 << 20
 	// maxPendingTunnelRequests bounds the requests in flight on one connection.
 	// A container bridges one request at a time, so a deeper queue only adds
 	// latency before the timeout; past this the caller is better off with an
 	// immediate 429 than with a request that will time out a minute later.
 	maxPendingTunnelRequests = 32
-	// maxTunnelBodyBytes is where the JSON tunnel stops being the right carrier.
+	// maxTunnelInlineBody is where a body stops riding in one JSON message.
 	// Base64 in a WebSocket frame costs a third more bytes and holds the whole
-	// body in memory on both ends; a 2 MiB cut-off is the documented boundary.
-	maxTunnelBodyBytes = 2 << 20
+	// body in memory on both ends, so anything larger travels as
+	// tunnel_*_body chunks instead.
+	maxTunnelInlineBody = nanoprotocol.TunnelInlineBodyBytes
 	// tunnelHolderTTL is how long a cross-replica lookup is trusted. A container
 	// that just reconnected elsewhere is reachable again after this at the latest;
 	// the cost of a stale entry is one failed forward, not a lost message.
@@ -79,11 +85,39 @@ type hypervisorConn struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
 	mu      sync.Mutex
-	pending map[string]chan *nanoprotocol.TunnelResponse
+	pending map[string]*pendingRequest
+	// features records the protocol extensions this container advertised when
+	// it registered. An empty set is the pre-streaming hypervisor, which would
+	// silently drop chunk frames, so callers must not send them.
+	features map[string]bool
+}
+
+// pendingRequest is one in-flight forward. head carries the response header
+// frame (or the whole response when the body is inline); chunks carries the
+// body blocks of a streamed response.
+type pendingRequest struct {
+	head   chan *nanoprotocol.TunnelResponse
+	chunks chan *nanoprotocol.TunnelBodyChunk
+}
+
+func newPendingRequest() *pendingRequest {
+	return &pendingRequest{
+		head:   make(chan *nanoprotocol.TunnelResponse, 1),
+		chunks: make(chan *nanoprotocol.TunnelBodyChunk, nanoprotocol.TunnelStreamBufferChunks),
+	}
 }
 
 func newHypervisorConn(conn *websocket.Conn) *hypervisorConn {
-	return &hypervisorConn{conn: conn, pending: make(map[string]chan *nanoprotocol.TunnelResponse)}
+	return &hypervisorConn{
+		conn:     conn,
+		pending:  make(map[string]*pendingRequest),
+		features: make(map[string]bool),
+	}
+}
+
+// supportsBodyStream reports whether this container speaks chunked bodies.
+func (c *hypervisorConn) supportsBodyStream() bool {
+	return c.features[nanoprotocol.TunnelFeatureBodyStream]
 }
 
 // writeJSONScoped writes v with a bounded, self-clearing write deadline so a
@@ -104,45 +138,92 @@ func (c *hypervisorConn) writeJSON(v any) error {
 
 // addPending registers a waiter for one request, or refuses when the connection
 // already carries its allowed number of them.
-func (c *hypervisorConn) addPending(id string) (chan *nanoprotocol.TunnelResponse, error) {
+func (c *hypervisorConn) addPending(id string) (*pendingRequest, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.pending) >= maxPendingTunnelRequests {
 		return nil, errTunnelBusy
 	}
-	ch := make(chan *nanoprotocol.TunnelResponse, 1)
-	c.pending[id] = ch
-	return ch, nil
+	p := newPendingRequest()
+	c.pending[id] = p
+	return p, nil
 }
 
+// removePending drops a finished request and wakes anyone still reading it.
+// Closing happens under the same lock that guards delivery, so a chunk arriving
+// for a removed request is dropped instead of panicking on a closed channel.
 func (c *hypervisorConn) removePending(id string) {
 	c.mu.Lock()
-	delete(c.pending, id)
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	c.closePendingLocked(id)
 }
 
-func (c *hypervisorConn) resolvePending(resp *nanoprotocol.TunnelResponse) bool {
+func (c *hypervisorConn) closePendingLocked(id string) {
+	p, ok := c.pending[id]
+	if !ok {
+		return
+	}
+	delete(c.pending, id)
+	close(p.head)
+	close(p.chunks)
+}
+
+// deliverResponse routes a response header frame. A streamed response keeps the
+// pending entry for its body chunks; an inline one completes here.
+func (c *hypervisorConn) deliverResponse(resp *nanoprotocol.TunnelResponse) bool {
 	c.mu.Lock()
-	ch, ok := c.pending[resp.RequestID]
-	if ok {
-		delete(c.pending, resp.RequestID)
+	defer c.mu.Unlock()
+	p, ok := c.pending[resp.RequestID]
+	if !ok {
+		return true
 	}
-	c.mu.Unlock()
-	if ok {
-		ch <- resp
-		close(ch)
+	select {
+	case p.head <- resp:
+	default:
+		// head is buffered once; a second header for the same request means the
+		// peer is confused about the correlation id.
+		return false
 	}
+	if !resp.Streamed {
+		c.closePendingLocked(resp.RequestID)
+	}
+	return true
+}
+
+// deliverChunk routes one body block. It never blocks: a peer that keeps
+// sending while nobody reads is a broken stream, and false tells the read loop
+// to drop the connection rather than grow an unbounded buffer.
+func (c *hypervisorConn) deliverChunk(chunk *nanoprotocol.TunnelBodyChunk) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	p, ok := c.pending[chunk.RequestID]
+	if !ok {
+		return true
+	}
+	select {
+	case p.chunks <- chunk:
+		return true
+	default:
+		return false
+	}
+}
+
+// cancelPending drops a request the other end cancelled.
+func (c *hypervisorConn) cancelPending(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.pending[id]
+	c.closePendingLocked(id)
 	return ok
 }
 
-// failAll unblocks every waiter when the connection dies; they see a nil
-// response and report "tunnel closed".
+// failAll unblocks every waiter when the connection dies; a closed channel is
+// how a reader learns that no answer is coming.
 func (c *hypervisorConn) failAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for id, ch := range c.pending {
-		close(ch)
-		delete(c.pending, id)
+	for id := range c.pending {
+		c.closePendingLocked(id)
 	}
 }
 
@@ -249,6 +330,9 @@ func (s *Server) handleHypervisorTunnelWS(w http.ResponseWriter, r *http.Request
 
 	name := "hypervisor-" + payload.UserID
 	hc := newHypervisorConn(conn)
+	for _, feature := range payload.Features {
+		hc.features[feature] = true
+	}
 	if prev := s.tunnels.register(name, hc); prev != nil {
 		// A reconnect replaced a half-dead connection: its requests are gone
 		// anyway, so unblock them rather than leave them waiting for a timeout.
@@ -297,7 +381,32 @@ func (s *Server) handleHypervisorTunnelWS(w http.ResponseWriter, r *http.Request
 			if err := msg.DecodePayload(&resp); err != nil {
 				continue
 			}
-			hc.resolvePending(&resp)
+			if !hc.deliverResponse(&resp) {
+				slog.Warn("tunnel sent a second response header", "tunnel", name, "request_id", resp.RequestID)
+				return
+			}
+		case nanoprotocol.TypeTunnelResponseBody:
+			var chunk nanoprotocol.TunnelBodyChunk
+			if err := msg.DecodePayload(&chunk); err != nil {
+				continue
+			}
+			if len(chunk.Data) > nanoprotocol.TunnelChunkBytes {
+				slog.Warn("tunnel sent an oversized chunk", "tunnel", name, "bytes", len(chunk.Data))
+				return
+			}
+			if !hc.deliverChunk(&chunk) {
+				// Nobody is draining this stream; buffering more would only move
+				// the failure to the heap. Dropping the connection fails the
+				// request with a clear 502 and the container reconnects.
+				slog.Warn("tunnel stream buffer is full; closing the connection", "tunnel", name, "request_id", chunk.RequestID)
+				return
+			}
+		case nanoprotocol.TypeTunnelCancel:
+			var cancelled nanoprotocol.TunnelCancel
+			if err := msg.DecodePayload(&cancelled); err != nil {
+				continue
+			}
+			hc.cancelPending(cancelled.RequestID)
 		case nanoprotocol.TypeTunnelStreamOutput:
 			var p nanoprotocol.TunnelStreamOutput
 			if err := msg.DecodePayload(&p); err != nil {
@@ -401,8 +510,8 @@ func (s *Server) forwardTunnelRequest(name string, req nanoprotocol.TunnelReques
 	}
 
 	select {
-	case resp := <-ch:
-		if resp == nil {
+	case resp, ok := <-ch.head:
+		if !ok || resp == nil {
 			return nil, errors.New("tunnel closed before the response")
 		}
 		return resp, nil

@@ -71,7 +71,7 @@ func TestTunnelBodyOverTheLimitIs413(t *testing.T) {
 	// slice on the wire (base64 in JSON), which is exactly why the limit exists.
 	body, err := json.Marshal(nanoprotocol.TunnelRequest{
 		Method: "POST", Path: "/upload",
-		Body: make([]byte, maxTunnelBodyBytes+1),
+		Body: make([]byte, maxTunnelInlineBody+1),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

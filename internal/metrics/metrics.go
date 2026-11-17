@@ -60,17 +60,42 @@ var (
 		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 	})
 
-	// TunnelBodyBytes is the size of the body a caller asked to forward.
+	// TunnelBodyBytes is the size of the inline body a caller asked to forward.
+	// Streamed bodies are not sampled here: their size belongs to the file, not
+	// to the frame, and TunnelStreamBytes follows it.
 	TunnelBodyBytes = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "provisioner_tunnel_body_bytes",
-		Help:    "Body size of forwarded tunnel requests, in bytes.",
+		Help:    "Body size of inline forwarded tunnel requests, in bytes.",
 		Buckets: []float64{1024, 4096, 16384, 65536, 262144, 1 << 20, 2 << 20},
+	})
+
+	// TunnelStreamsActive is how many chunked transfers this replica carries.
+	// It is the number that must stay flat while a large download runs; a leak
+	// here is a stream nobody closed.
+	TunnelStreamsActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "provisioner_tunnel_streams_active",
+		Help: "Chunked tunnel transfers open on this replica.",
+	})
+
+	// TunnelStreamBytes counts body bytes carried as chunks.
+	TunnelStreamBytes = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "provisioner_tunnel_stream_bytes_total",
+		Help: "Body bytes carried by chunked tunnel frames.",
+	})
+
+	// TunnelCancelled counts streams a side stopped early (browser left, idle
+	// timeout). A rising rate with no user complaint is the container reading
+	// files nobody asked for.
+	TunnelCancelled = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "provisioner_tunnel_cancelled_total",
+		Help: "Streamed tunnel requests cancelled by one side.",
 	})
 )
 
 func init() {
 	prometheus.MustRegister(HTTPRequests, HTTPSeconds, ActiveTunnels,
-		TunnelRequests, TunnelRequestSeconds, TunnelBodyBytes)
+		TunnelRequests, TunnelRequestSeconds, TunnelBodyBytes,
+		TunnelStreamsActive, TunnelStreamBytes, TunnelCancelled)
 }
 
 // Handler serves the Prometheus text exposition.

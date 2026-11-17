@@ -69,6 +69,8 @@ func New(st *store.Store, runnerID, advertiseURL string) *Server {
 	mux.HandleFunc("GET /ws/hypervisor", s.handleHypervisorTunnelWS)
 	mux.HandleFunc("GET /ws/terminal", s.handleTerminalBridgeWS)
 	mux.HandleFunc("POST /api/v1/internal/tunnels/{name}/request", s.forwardTunnelRequestHTTP)
+	// The streamed path: bodies above the inline cut-off travel as chunks.
+	mux.HandleFunc("POST /api/v1/internal/tunnels/{name}/proxy", s.proxyTunnelRequestHTTP)
 	mux.HandleFunc("POST /api/v1/internal/tunnels/drain", s.restDrainTunnels)
 	// The runner registry is this service's too: it registers itself and reports
 	// its heartbeat, and the console prunes dead rows through the bus.

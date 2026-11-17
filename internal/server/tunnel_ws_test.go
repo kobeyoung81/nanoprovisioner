@@ -191,8 +191,8 @@ func TestTunnelForwardRequiresAValidRequest(t *testing.T) {
 // already replaced it, or a live container would become unreachable.
 func TestTunnelRegistry_ReplacedConnectionDoesNotUnregisterTheNewOne(t *testing.T) {
 	reg := newTunnelRegistry()
-	oldConn := &hypervisorConn{pending: map[string]chan *nanoprotocol.TunnelResponse{}}
-	newConn := &hypervisorConn{pending: map[string]chan *nanoprotocol.TunnelResponse{}}
+	oldConn := &hypervisorConn{pending: map[string]*pendingRequest{}, features: map[string]bool{}}
+	newConn := &hypervisorConn{pending: map[string]*pendingRequest{}, features: map[string]bool{}}
 
 	if prev := reg.register("hypervisor-user-1", oldConn); prev != nil {
 		t.Fatalf("the first registration replaced something: %+v", prev)
