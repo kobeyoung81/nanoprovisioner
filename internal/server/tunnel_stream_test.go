@@ -160,6 +160,25 @@ func TestStreamedUploadRefusesAnOldContainer(t *testing.T) {
 	conn := dialTunnel(t, srv, "user-2")
 	defer conn.Close()
 
+	// If the guard ever stops working, the request reaches this old container and
+	// the test sees a 200 instead of a 413: a silent pass is worse than a red.
+	go func() {
+		var msg nanoprotocol.Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		var req nanoprotocol.TunnelRequest
+		if err := msg.DecodePayload(&req); err != nil {
+			return
+		}
+		resp, err := nanoprotocol.NewMessage(nanoprotocol.TypeTunnelResponse, nanoprotocol.TunnelResponse{
+			RequestID: req.RequestID, Status: http.StatusOK, Body: []byte(`{}`),
+		})
+		if err == nil {
+			_ = conn.WriteJSON(resp)
+		}
+	}()
+
 	payload := bytes.Repeat([]byte("x"), nanoprotocol.TunnelInlineBodyBytes+1)
 	req, err := http.NewRequest(http.MethodPost, proxyURL(srv, "hypervisor-user-2", http.MethodPut, "/api/v1/files/a/big"), bytes.NewReader(payload))
 	if err != nil {
