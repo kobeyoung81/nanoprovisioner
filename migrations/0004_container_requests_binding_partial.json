@@ -1,0 +1,51 @@
+{
+  "collections": {
+    "provisioner_container_requests": {
+      "indexes": [
+        {
+          "name": "status_created",
+          "keys": [
+            [
+              "status",
+              1
+            ],
+            [
+              "created_at",
+              1
+            ]
+          ]
+        },
+        {
+          "name": "user_binding",
+          "keys": [
+            [
+              "user_id",
+              1
+            ],
+            [
+              "binding_id",
+              1
+            ]
+          ]
+        }
+      ],
+      "replaceIndexes": [
+        {
+          "name": "binding_unique",
+          "keys": [
+            [
+              "binding_id",
+              1
+            ]
+          ],
+          "unique": true,
+          "partialFilterExpression": {
+            "binding_id": {
+              "$type": "number"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

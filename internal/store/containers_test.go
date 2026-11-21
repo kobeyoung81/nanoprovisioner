@@ -210,11 +210,15 @@ func TestMigrations_DeclareContainerRequestIndexes(t *testing.T) {
 	ctx := context.Background()
 
 	want := map[string]struct {
-		keys     bson.D
-		unique   bool
-		sparseOK bool
+		keys    bson.D
+		unique  bool
+		partial bool
 	}{
-		"binding_unique": {keys: bson.D{{Key: "binding_id", Value: int32(1)}}, unique: true},
+		// binding_unique is a partial unique index: only numeric bindings take
+		// part, so the queue's user-level rows (an explicit null) do not collide
+		// with each other. sparse alone does not do that — it skips a missing
+		// field, not an explicit null.
+		"binding_unique": {keys: bson.D{{Key: "binding_id", Value: int32(1)}}, unique: true, partial: true},
 		"status_created": {keys: bson.D{{Key: "status", Value: int32(1)}, {Key: "created_at", Value: int32(1)}}},
 		"user_binding":   {keys: bson.D{{Key: "user_id", Value: int32(1)}, {Key: "binding_id", Value: int32(1)}}},
 	}
@@ -224,9 +228,11 @@ func TestMigrations_DeclareContainerRequestIndexes(t *testing.T) {
 		t.Fatalf("list indexes: %v", err)
 	}
 	type indexDoc struct {
-		Name   string `bson:"name"`
-		Key    bson.D `bson:"key"`
-		Unique bool   `bson:"unique"`
+		Name    string `bson:"name"`
+		Key     bson.D `bson:"key"`
+		Unique  bool   `bson:"unique"`
+		Sparse  bool   `bson:"sparse"`
+		Partial bson.D `bson:"partialFilterExpression"`
 	}
 	seen := map[string]indexDoc{}
 	for cur.Next(ctx) {
@@ -252,5 +258,36 @@ func TestMigrations_DeclareContainerRequestIndexes(t *testing.T) {
 		if got.Unique != want.unique {
 			t.Fatalf("index %s unique = %v, want %v", name, got.Unique, want.unique)
 		}
+		if want.partial {
+			if got.Sparse {
+				t.Fatalf("index %s is still sparse; the partial filter replaces it", name)
+			}
+			if bindingTypeOf(got.Partial) != "number" {
+				t.Fatalf("index %s partialFilterExpression = %v, want binding_id $type number", name, got.Partial)
+			}
+		} else if len(got.Partial) != 0 {
+			t.Fatalf("index %s has an unexpected partial filter %v", name, got.Partial)
+		}
 	}
+}
+
+// bindingTypeOf digs the $type out of a partial filter of the shape
+// {"binding_id": {"$type": "number"}}.
+func bindingTypeOf(filter bson.D) string {
+	for _, e := range filter {
+		if e.Key != "binding_id" {
+			continue
+		}
+		inner, ok := e.Value.(bson.D)
+		if !ok {
+			return ""
+		}
+		for _, in := range inner {
+			if in.Key == "$type" {
+				s, _ := in.Value.(string)
+				return s
+			}
+		}
+	}
+	return ""
 }
