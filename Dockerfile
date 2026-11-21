@@ -1,17 +1,18 @@
-FROM golang:1.25-alpine AS builder
+FROM kobeyoung81/base-go:1.27.4-alpine3.24-r2 AS builder
 WORKDIR /app
-RUN go env -w GO111MODULE=on
-RUN go env -w GOPROXY=https://goproxy.cn,direct
-RUN apk add --no-cache git
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=nanosec-gomod,target=/root/go/pkg/mod \
+    --mount=type=cache,id=nanosec-gocache,target=/root/.cache/go-build \
+    go mod download
 COPY . .
 ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" -o /nanorunner ./cmd/nanorunner
+RUN --mount=type=cache,id=nanosec-gomod,target=/root/go/pkg/mod \
+    --mount=type=cache,id=nanosec-gocache,target=/root/.cache/go-build \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" -o /nanorunner ./cmd/nanorunner
 
-FROM alpine:3.19
+FROM kobeyoung81/base-runtime:alpine3.24.4-r2
 
 # Build metadata. All three come from the tagged commit (the version tag, the
 # commit sha, and that commit's time), so two builds of one tag describe the same
