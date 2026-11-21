@@ -1,4 +1,4 @@
-FROM kobeyoung81/base-go:1.27.4-alpine3.24-r2 AS builder
+FROM kobeyoung81/base-go:1.27.4-alpine3.24-r3 AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN --mount=type=cache,id=nanosec-gomod,target=/root/go/pkg/mod \
@@ -12,7 +12,7 @@ RUN --mount=type=cache,id=nanosec-gomod,target=/root/go/pkg/mod \
     --mount=type=cache,id=nanosec-gocache,target=/root/.cache/go-build \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" -o /nanorunner ./cmd/nanorunner
 
-FROM kobeyoung81/base-runtime:alpine3.24.4-r2
+FROM kobeyoung81/base-runtime:alpine3.24.4-r3
 
 # Build metadata. All three come from the tagged commit (the version tag, the
 # commit sha, and that commit's time), so two builds of one tag describe the same
