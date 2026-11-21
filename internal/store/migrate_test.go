@@ -20,6 +20,39 @@ func TestParseMongoMigrationRequiresReplaceIndexNames(t *testing.T) {
 	}
 }
 
+// A recorded migration does not mean its indexes exist: dropping and recreating
+// a collection clears the indexes and keeps the record. Staging is in exactly
+// that state today, so the startup check has to look at the database.
+func TestMissingDeclaredIndexesReportsDrift(t *testing.T) {
+	st := testStore(t)
+	migrateAll(t, st)
+	manifests, err := migrations.Load()
+	if err != nil {
+		t.Fatalf("load manifests: %v", err)
+	}
+
+	missing, err := st.MissingDeclaredIndexes(manifests)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("freshly migrated database reports missing indexes: %v", missing)
+	}
+
+	// Reproduce the drift: the collection keeps its documents, loses an index.
+	if err := st.DB().Collection(containerRequestsCollection).Indexes().DropOne(context.Background(), "user_binding"); err != nil {
+		t.Fatalf("drop index: %v", err)
+	}
+
+	missing, err = st.MissingDeclaredIndexes(manifests)
+	if err != nil {
+		t.Fatalf("verify after drop: %v", err)
+	}
+	if len(missing) != 1 || missing[0] != containerRequestsCollection+".user_binding" {
+		t.Fatalf("missing = %v, want one entry for user_binding", missing)
+	}
+}
+
 // migrateAll applies every manifest, the way the service does at startup.
 func migrateAll(t *testing.T, st *Store) {
 	t.Helper()

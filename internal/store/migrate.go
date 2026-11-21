@@ -69,7 +69,98 @@ func (s *Store) Migrate(manifests map[string]string) ([]string, error) {
 		}
 		ran = append(ran, name)
 	}
+
+	// A collection dropped and recreated after its manifest was recorded keeps
+	// the record and loses the indexes. That leaves the deployment running with
+	// no unique constraint at all while every migration reports "applied", so
+	// say it out loud instead of trusting the records.
+	if missing, err := s.MissingDeclaredIndexes(manifests); err != nil {
+		slog.Warn("cannot verify declared indexes", "error", err)
+	} else if len(missing) > 0 {
+		slog.Warn("indexes declared by applied migrations are missing",
+			"count", len(missing), "indexes", strings.Join(missing, ", "))
+	}
 	return ran, nil
+}
+
+// MissingDeclaredIndexes names every index the manifests declare that the
+// database does not currently have, as "collection.index".
+func (s *Store) MissingDeclaredIndexes(manifests map[string]string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	specs := make(map[string]mongoMigration, len(manifests))
+	names := make([]string, 0, len(manifests))
+	for name, manifest := range manifests {
+		spec, err := parseMongoMigration(manifest)
+		if err != nil {
+			return nil, fmt.Errorf("migration %s: %w", name, err)
+		}
+		specs[name] = spec
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// Two manifests may declare the same index (a later one re-declaring an
+	// earlier index to repair a collection that lost it), so report each once.
+	seen := make(map[string]bool)
+	var missing []string
+	for _, name := range names {
+		spec := specs[name]
+		colls := make([]string, 0, len(spec.Collections))
+		for coll := range spec.Collections {
+			colls = append(colls, coll)
+		}
+		sort.Strings(colls)
+		for _, coll := range colls {
+			cs := spec.Collections[coll]
+			want := make([]string, 0, len(cs.Indexes)+len(cs.ReplaceIndexes))
+			for _, ix := range append(append([]indexSpec{}, cs.Indexes...), cs.ReplaceIndexes...) {
+				if ix.Name != "" {
+					want = append(want, ix.Name)
+				}
+			}
+			if len(want) == 0 {
+				continue
+			}
+			have, err := s.indexNames(ctx, coll)
+			if err != nil {
+				return nil, err
+			}
+			for _, indexName := range want {
+				key := coll + "." + indexName
+				if !have[indexName] && !seen[key] {
+					seen[key] = true
+					missing = append(missing, key)
+				}
+			}
+		}
+	}
+	return missing, nil
+}
+
+func (s *Store) indexNames(ctx context.Context, collection string) (map[string]bool, error) {
+	cur, err := s.db.Collection(collection).Indexes().List(ctx)
+	if err != nil {
+		if isIndexNotFound(err) {
+			// The collection does not exist (yet): every declared index is missing.
+			return map[string]bool{}, nil
+		}
+		return nil, fmt.Errorf("list indexes on %s: %w", collection, err)
+	}
+	defer func() { _ = cur.Close(ctx) }()
+
+	have := make(map[string]bool)
+	for cur.Next(ctx) {
+		var doc struct {
+			Name string `bson:"name"`
+		}
+		if err := cur.Decode(&doc); err != nil {
+			return nil, fmt.Errorf("decode index on %s: %w", collection, err)
+		}
+		have[doc.Name] = true
+	}
+	return have, cur.Err()
 }
 
 // MigrationStatus reports every manifest and whether it has been applied.
